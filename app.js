@@ -445,7 +445,7 @@ function renderPOS(area) {
             ${dateFilterBar('sale')}
             ${held.length > 0 ? `<div class="section-card"><div class="section-header"><h3>فواتير معلقة (${held.length})</h3></div><div class="held-list">${held.map((h,i) => `<div class="held-item" onclick="resumeHeld(${i})"><div><strong>${h.customerName || 'بدون عميل'}</strong><br><small style="color:var(--text-secondary)">${h.items.length} منتج - ${fmt(h.total)}</small></div><div style="display:flex;gap:4px"><button class="btn btn-sm btn-primary" onclick="event.stopPropagation();resumeHeld(${i})"><span class="material-icons-round" style="font-size:14px">play_arrow</span></button><button class="btn btn-sm btn-danger" onclick="event.stopPropagation();removeHeld(${i})"><span class="material-icons-round" style="font-size:14px">delete</span></button></div></div>`).join('')}</div></div>` : ''}
             <div class="section-card"><div class="section-header"><h3>آخر الفواتير (${saleInvoices.length})</h3></div>
-                <div class="table-container"><table><thead><tr><th>رقم</th><th>العميل</th><th>الإجمالي</th><th>التاريخ</th><th>إجراءات</th></tr></thead><tbody id="saleTableBody">
+                <div class="table-container"><table><thead><tr><th>رقم</th><th>العميل</th><th>الإجمالي</th><th>التاريخ</th><th>إجراءات</th></tr></thead><tbody>
                 ${saleInvoices.length===0 ? '<tr><td colspan="5" style="text-align:center;padding:30px;color:var(--text-secondary)">لا توجد فواتير</td></tr>' :
                 saleInvoices.slice(0,50).map(i => {
                     const isReturn = i.isReturn;
@@ -453,8 +453,7 @@ function renderPOS(area) {
                     const totalColor = isReturn ? 'var(--error)' : 'var(--primary)';
                     return `<tr data-date="${i.createdAt}" data-total="${i.total}" style="cursor:pointer" onclick="editInvoice('${i.id}')"><td><strong>${i.invoiceNumber}</strong></td><td>${i.customerName||'نقدي'}${isReturn?'<br><span style="color:var(--error);font-size:10px;font-weight:700">مرتجع</span>':''}</td><td style="font-weight:700;color:${totalColor}">${fmt(totalDisplay)}</td><td>${fmtDate(i.createdAt)}</td><td><button class="btn btn-sm btn-danger" onclick="event.stopPropagation();deleteInvoice('${i.id}')"><span class="material-icons-round">delete</span></button></td></tr>`;
                 }).join('')}
-                </tbody></table></div>
-            </div>`;
+                </tbody></table></div></div>`;
         return;
     }
 

@@ -703,10 +703,9 @@ select.form-control {
     .pos-products { min-height: 40vh; }
     .form-row { grid-template-columns: 1fr; }
     .quick-action { min-width: calc(50% - 4px); }
-    .table-container table { min-width: 350px; }
+    .table-container { overflow-x: auto; -webkit-overflow-scrolling: touch; }
     .payment-methods { grid-template-columns: repeat(2, 1fr); }
     .inventory-cards { display: block; }
-    .table-container { display: none; }
     .modal { max-width: 100%; margin: 0; border-radius: var(--radius-md) var(--radius-md) 0 0; max-height: 85vh; max-height: 85dvh; }
     .modal-overlay.show { align-items: flex-end; }
     .settings-item { flex-direction: column; align-items: flex-start; gap: 8px; }

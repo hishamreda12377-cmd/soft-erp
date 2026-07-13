@@ -1,17 +1,99 @@
 // ==================== DATA STORE ====================
 const DB = {
     get(k) { try { return JSON.parse(localStorage.getItem('erp_' + k)) || []; } catch { return []; } },
-    set(k, v) { localStorage.setItem('erp_' + k, JSON.stringify(v)); },
+    set(k, v) {
+        localStorage.setItem('erp_' + k, JSON.stringify(v));
+        DB._autoBackup();
+    },
     getOne(k) { try { return JSON.parse(localStorage.getItem('erp_' + k)); } catch { return null; } },
-    setOne(k, v) { localStorage.setItem('erp_' + k, JSON.stringify(v)); },
+    setOne(k, v) {
+        localStorage.setItem('erp_' + k, JSON.stringify(v));
+        DB._autoBackup();
+    },
+    _backupKey: 'erp_backup_snapshot',
+    _dataKeys: ['products','customers','suppliers','warehouses','expenses','invoices','movements','users','settings','categories','units','heldInvoices','heldPurchases','inventoryCounts','trash','profile','seeded','quotes'],
+    _autoBackup() {
+        try {
+            const snapshot = {};
+            this._dataKeys.forEach(k => {
+                const v = localStorage.getItem('erp_' + k);
+                if (v) snapshot[k] = v;
+            });
+            localStorage.setItem(this._backupKey, JSON.stringify(snapshot));
+        } catch {}
+    },
+    _restoreBackup() {
+        try {
+            const snap = JSON.parse(localStorage.getItem(this._backupKey));
+            if (!snap) return false;
+            let restored = 0;
+            this._dataKeys.forEach(k => {
+                if (snap[k] && !localStorage.getItem('erp_' + k)) {
+                    localStorage.setItem('erp_' + k, snap[k]);
+                    restored++;
+                }
+            });
+            return restored > 0;
+        } catch { return false; }
+    }
 };
 
 function uid() { return Date.now().toString(36) + Math.random().toString(36).substr(2, 9); }
-function getTaxRate() { const s = DB.getOne('settings')||{}; return s.enableTax===false ? 0 : (s.taxRate||14); }
+function getTaxRate() { return 0; }
 function fmt(n) { return (n || 0).toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ',') + ' ج.م'; }
+function itemNet(it) { return (it.unitPrice||0) * (it.quantity||0) - (it.discount||0); }
+function itemCost(it) { if (it.buy != null) return it.buy; const p = (window.__erpProducts || DB.get('products')).find(x => x.id === it.productId); return p ? (p.buyingPrice||0) : 0; }
 function fmtDate(d) { const dt = new Date(d); return `${dt.getFullYear()}/${String(dt.getMonth()+1).padStart(2,'0')}/${String(dt.getDate()).padStart(2,'0')}`; }
 function fmtDateTime(d) { const dt = new Date(d); return `${fmtDate(d)} ${String(dt.getHours()).padStart(2,'0')}:${String(dt.getMinutes()).padStart(2,'0')}`; }
 function todayStr() { return new Date().toISOString().split('T')[0]; }
+
+let _barcodeScanner = null;
+function openBarcodeScanner(mode) {
+    if (typeof Html5Qrcode === 'undefined') { toast('مكتبة المسح غير متوفرة', 'error'); return; }
+    const modal = document.getElementById('modalOverlay');
+    document.getElementById('modalTitle').textContent = '📸 مسح الباركود';
+    document.getElementById('modalBody').innerHTML = `
+        <div style="text-align:center">
+            <div id="barcodeScannerView" style="width:100%;max-width:400px;margin:0 auto;border-radius:var(--radius);overflow:hidden"></div>
+            <p style="font-size:12px;color:var(--text-secondary);margin-top:8px">وجّه الكاميرا نحو الباركود</p>
+            <button class="btn btn-sm btn-outline" onclick="closeBarcodeScanner()" style="margin-top:8px"><span class="material-icons-round" style="font-size:14px">close</span> إغلاق</button>
+        </div>`;
+    document.getElementById('modalFooter').innerHTML = '';
+    modal.classList.add('show');
+    modal.onclick = (e) => { if (e.target === modal) closeBarcodeScanner(); };
+
+    setTimeout(() => {
+        try {
+            _barcodeScanner = new Html5Qrcode('barcodeScannerView');
+            _barcodeScanner.start(
+                { facingMode: 'environment' },
+                { fps: 10, qrbox: { width: 250, height: 150 }, aspectRatio: 1.5 },
+                (decodedText) => {
+                    closeBarcodeScanner();
+                    if (mode === 'pos') {
+                        const searchInput = document.getElementById('posSearch');
+                        if (searchInput) { searchInput.value = decodedText; searchPOSProducts(decodedText); }
+                    } else {
+                        const searchInput = document.getElementById('purSearch');
+                        if (searchInput) { searchInput.value = decodedText; searchPurProducts(decodedText); }
+                    }
+                },
+                () => {}
+            );
+        } catch (err) {
+            document.getElementById('barcodeScannerView').innerHTML = '<p style="color:var(--error);padding:20px">تعذر فتح الكاميرا. تأكد من إذن الكاميرا.</p>';
+        }
+    }, 300);
+}
+
+function closeBarcodeScanner() {
+    if (_barcodeScanner) {
+        _barcodeScanner.stop().catch(() => {});
+        _barcodeScanner.clear();
+        _barcodeScanner = null;
+    }
+    closeModal();
+}
 
 let customDateFrom = '';
 let customDateTo = '';
@@ -88,11 +170,24 @@ function nextInvoiceNumber() {
     });
     return String(max + 1);
 }
+function nextQuoteNumber() {
+    const quotes = DB.get('quotes');
+    let max = 0;
+    quotes.forEach(q => { const num = parseInt(q.quoteNumber); if (!isNaN(num) && num > max) max = num; });
+    return String(max + 1);
+}
 
 // ==================== SEED DATA ====================
 function seedData() {
     if (DB.getOne('seeded')) return;
-    DB.set('categories', []);
+    DB.set('categories', [
+        { id:uid(), name:'بدون تصنيف' },
+    ]);
+    DB.set('units', [
+        { id:uid(), name:'قطعة' },
+        { id:uid(), name:'علبة' },
+        { id:uid(), name:'كرتونة' },
+    ]);
     DB.set('products', []);
     DB.set('customers', []);
     DB.set('suppliers', []);
@@ -105,7 +200,7 @@ function seedData() {
     DB.set('users', [
         { id:'u1', username:'admin', password:'123456', name:'المدير', role:'admin', active:true },
     ]);
-    DB.set('settings', { companyName:'', currency:'ج.م', taxRate:14, enableTax:true, darkMode:false, storeName:'', storePhone:'', storeAddress:'' });
+    DB.set('settings', { companyName:'', currency:'ج.م', darkMode:false, storeName:'', storePhone:'', storeAddress:'', bluetoothThermal:false, thermalWidth:80, receiptHeader:'', receiptFooter:'', taxNumber:'', tgToken:'', tgChatId:'', autoBackup:false });
     DB.set('heldInvoices', []);
     DB.set('heldPurchases', []);
     DB.set('inventoryCounts', []);
@@ -160,8 +255,8 @@ function renderScreen(name) {
         purchases: renderPurchases, customers: renderCustomers, suppliers: renderSuppliers,
         inventory: renderInventory, warehouses: renderWarehouses, expenses: renderExpenses,
         reports: renderReports, movements: renderMovements, profitloss: renderProfitLoss,
-        users: renderUsers, settings: renderSettings, profile: renderProfile, trash: renderTrash, returns: renderReturns,
-        inventoryCounts: renderInventoryCounts,
+        users: renderUsers, settings: renderSettings, profile: renderProfile, trash: renderTrash, returns: renderReturns, invoices: renderInvoices, quotes: renderQuotes,
+        inventoryCounts: renderInventoryCounts, purchaseOrders: renderPurchaseOrders, profitReport: renderProfitReport,
     };
     (screens[name] || renderDashboard)(area);
 }
@@ -398,6 +493,13 @@ function renderDashboard(area) {
             <div class="stat-card" onclick="showScreen('inventory')"><div class="icon" style="background:rgba(20,184,166,0.1)"><span class="material-icons-round" style="color:#14B8A6">warehouse</span></div><div class="label">قيمة المخزون</div><div class="value">${fmt(invValue)}</div></div>
             ${lowStock.length>0 ? `<div class="stat-card" onclick="showScreen('inventory')" style="border:1.5px solid rgba(239,68,68,0.3)"><div class="icon" style="background:rgba(239,68,68,0.1)"><span class="material-icons-round" style="color:#EF4444">warning</span></div><div class="label">نقص مخزون</div><div class="value" style="color:#EF4444">${lowStock.length} صنف</div></div>` : ''}
         </div>
+        <div style="display:flex;gap:8px;margin-bottom:14px;overflow-x:auto;padding-bottom:4px;-webkit-overflow-scrolling:touch">
+            <button onclick="posMode='invoice';cart=[];posCustomerId='';posCustomerName='';cartDiscount=0;editingInvoiceId=null;editingIsReturn=false;showScreen('pos')" style="flex-shrink:0;display:flex;align-items:center;gap:6px;padding:10px 16px;border-radius:var(--radius);border:none;background:var(--gradient-primary);color:white;font-size:12px;font-weight:700;cursor:pointer;box-shadow:0 3px 10px rgba(37,99,235,0.3)"><span class="material-icons-round" style="font-size:18px">add_shopping_cart</span> بيع جديد</button>
+            <button onclick="purMode='invoice';purCart=[];purSupplierId='';purSupplierName='';purDiscount=0;editingPurInvoiceId=null;editingPurIsReturn=false;showScreen('purchases')" style="flex-shrink:0;display:flex;align-items:center;gap:6px;padding:10px 16px;border-radius:var(--radius);border:none;background:linear-gradient(135deg,#8B5CF6,#7C3AED);color:white;font-size:12px;font-weight:700;cursor:pointer;box-shadow:0 3px 10px rgba(139,92,246,0.3)"><span class="material-icons-round" style="font-size:18px">shopping_cart</span> مشتريات</button>
+            <button onclick="openProductModal();showScreen('products')" style="flex-shrink:0;display:flex;align-items:center;gap:6px;padding:10px 16px;border-radius:var(--radius);border:none;background:linear-gradient(135deg,#10B981,#059669);color:white;font-size:12px;font-weight:700;cursor:pointer;box-shadow:0 3px 10px rgba(16,185,129,0.3)"><span class="material-icons-round" style="font-size:18px">inventory_2</span> إضافة صنف</button>
+            <button onclick="showScreen('reports')" style="flex-shrink:0;display:flex;align-items:center;gap:6px;padding:10px 16px;border-radius:var(--radius);border:none;background:linear-gradient(135deg,#F59E0B,#D97706);color:white;font-size:12px;font-weight:700;cursor:pointer;box-shadow:0 3px 10px rgba(245,158,11,0.3)"><span class="material-icons-round" style="font-size:18px">bar_chart</span> التقارير</button>
+            <button onclick="showScreen('purchaseOrders')" style="flex-shrink:0;display:flex;align-items:center;gap:6px;padding:10px 16px;border-radius:var(--radius);border:none;background:linear-gradient(135deg,#F43F5E,#E11D48);color:white;font-size:12px;font-weight:700;cursor:pointer;box-shadow:0 3px 10px rgba(244,63,94,0.3)"><span class="material-icons-round" style="font-size:18px">assignment</span> طلب شراء</button>
+        </div>
         <div class="section-card">
             <div class="section-header"><h3>📈 مبيعات آخر 7 أيام</h3></div>
             <div class="chart-container"><canvas id="salesChart"></canvas></div>
@@ -412,6 +514,7 @@ function renderDashboard(area) {
 
 // ==================== POS ====================
 let cart = [];
+let curTax = 0;
 let posCustomerId = '';
 let posCustomerName = '';
 let posMode = 'list';
@@ -444,16 +547,43 @@ function renderPOS(area) {
             <div class="section-card" style="margin-bottom:12px"><div style="display:flex;justify-content:space-between;align-items:center"><span style="color:var(--text-secondary)">إجمالي المبيعات (${saleInvoices.length} فاتورة)</span><span style="font-size:20px;font-weight:800;color:var(--primary)" id="saleFilteredTotal">${fmt(totalSales)}</span></div></div>
             ${dateFilterBar('sale')}
             ${held.length > 0 ? `<div class="section-card"><div class="section-header"><h3>فواتير معلقة (${held.length})</h3></div><div class="held-list">${held.map((h,i) => `<div class="held-item" onclick="resumeHeld(${i})"><div><strong>${h.customerName || 'بدون عميل'}</strong><br><small style="color:var(--text-secondary)">${h.items.length} منتج - ${fmt(h.total)}</small></div><div style="display:flex;gap:4px"><button class="btn btn-sm btn-primary" onclick="event.stopPropagation();resumeHeld(${i})"><span class="material-icons-round" style="font-size:14px">play_arrow</span></button><button class="btn btn-sm btn-danger" onclick="event.stopPropagation();removeHeld(${i})"><span class="material-icons-round" style="font-size:14px">delete</span></button></div></div>`).join('')}</div></div>` : ''}
-            <div class="section-card"><div class="section-header"><h3>آخر الفواتير (${saleInvoices.length})</h3></div>
-                <div class="table-container"><table><thead><tr><th>رقم</th><th>العميل</th><th>الإجمالي</th><th>التاريخ</th><th>إجراءات</th></tr></thead><tbody>
+            <div style="display:flex;gap:6px;margin-bottom:8px;flex-wrap:wrap">
+                <input class="form-control" id="saleSearch" placeholder="بحث برقم الفاتورة أو العميل..." oninput="filterInvoiceList('sale')" style="flex:1;min-width:140px;padding:7px 10px">
+                <select class="form-control" id="saleStatus" onchange="filterInvoiceList('sale')" style="min-width:110px;padding:7px 10px">
+                    <option value="all">كل الحالات</option>
+                    <option value="paid">مدفوعة</option>
+                    <option value="partial">جزئية</option>
+                    <option value="pending">آجلة</option>
+                    <option value="return">مرتجع</option>
+                </select>
+            </div>
+            <div class="section-card"><div class="section-header"><h3>فواتير البيع (${saleInvoices.length})</h3></div>
+                <div class="table-container"><table id="saleTable"><thead><tr>
+                    <th data-sortkey="num" data-sorttype="num" style="cursor:pointer">رقم</th>
+                    <th data-sortkey="party" data-sorttype="str" style="cursor:pointer">العميل</th>
+                    <th data-sortkey="total" data-sorttype="num" style="text-align:left;cursor:pointer">الإجمالي</th>
+                    <th data-sortkey="date" data-sorttype="date" style="text-align:left;cursor:pointer">التاريخ</th>
+                    <th>إجراءات</th>
+                </tr></thead><tbody id="saleTableBody">
                 ${saleInvoices.length===0 ? '<tr><td colspan="5" style="text-align:center;padding:30px;color:var(--text-secondary)">لا توجد فواتير</td></tr>' :
-                saleInvoices.slice(0,50).map(i => {
+                saleInvoices.map(i => {
                     const isReturn = i.isReturn;
                     const totalDisplay = isReturn ? -Math.abs(i.total) : i.total;
                     const totalColor = isReturn ? 'var(--error)' : 'var(--primary)';
-                    return `<tr data-date="${i.createdAt}" data-total="${i.total}" style="cursor:pointer" onclick="editInvoice('${i.id}')"><td><strong>${i.invoiceNumber}</strong></td><td>${i.customerName||'نقدي'}${isReturn?'<br><span style="color:var(--error);font-size:10px;font-weight:700">مرتجع</span>':''}</td><td style="font-weight:700;color:${totalColor}">${fmt(totalDisplay)}</td><td>${fmtDate(i.createdAt)}</td><td><button class="btn btn-sm btn-danger" onclick="event.stopPropagation();deleteInvoice('${i.id}')"><span class="material-icons-round">delete</span></button></td></tr>`;
+                    const statusVal = isReturn ? 'return' : (i.status||'paid');
+                    return `<tr data-search="${(i.invoiceNumber||'')+' '+(i.customerName||'نقدي')}" data-status="${statusVal}" data-total="${totalDisplay}" style="cursor:pointer" onclick="editInvoice('${i.id}')">
+                        <td data-sort="${i.invoiceNumber}"><strong>${i.invoiceNumber}</strong>${isReturn?' <span class="badge badge-danger" style="font-size:9px">مرتجع</span>':''}</td>
+                        <td data-sort="${i.customerName||'نقدي'}">${i.customerName||'نقدي'}</td>
+                        <td data-sort="${i.total}" style="font-weight:700;color:${totalColor}">${fmt(totalDisplay)}</td>
+                        <td data-sort="${i.createdAt}">${fmtDate(i.createdAt)}</td>
+                        <td style="white-space:nowrap">
+                            <button class="btn btn-xs btn-outline" onclick="event.stopPropagation();viewInvoice('${i.id}')" title="عرض"><span class="material-icons-round" style="font-size:14px">visibility</span></button>
+                            <button class="btn btn-xs btn-danger" onclick="event.stopPropagation();confirmModal('حذف الفاتورة؟', ()=>deleteInvoice('${i.id}'))" title="حذف"><span class="material-icons-round" style="font-size:14px">delete</span></button>
+                        </td>
+                    </tr>`;
                 }).join('')}
                 </tbody></table></div></div>`;
+        enableTableSort('saleTable');
         return;
     }
 
@@ -465,6 +595,7 @@ function renderPOS(area) {
                 <div style="padding:8px 10px;display:flex;gap:5px;align-items:center;flex-wrap:wrap;border-bottom:1px solid var(--border-light)">
                     <div style="display:flex;gap:4px;flex:1;min-width:0">
                         <button class="btn btn-sm btn-primary" onclick="${editingInvoiceId?`saveEditSale('${editingInvoiceId}')`:'saveSaleDirect()'}"><span class="material-icons-round" style="font-size:14px">save</span> حفظ</button>
+                        ${editingInvoiceId?'':`<button class="btn btn-sm btn-outline" onclick="saveQuote()"><span class="material-icons-round" style="font-size:14px">request_quote</span> عرض سعر</button>`}
                         ${editingInvoiceId?`<button class="btn btn-sm btn-success" onclick="saveEditSale('${editingInvoiceId}',true)"><span class="material-icons-round" style="font-size:14px">print</span> حفظ + طباعة</button>`:''}
                         ${editingInvoiceId?`<button class="btn btn-sm btn-outline" onclick="printInvoiceById('${editingInvoiceId}')"><span class="material-icons-round" style="font-size:14px">print</span></button>`:`<button class="btn btn-sm btn-outline" onclick="printCurrentPosCart()"><span class="material-icons-round" style="font-size:14px">print</span></button>`}
                         ${editingInvoiceId?`<label class="return-checkbox" style="display:flex;align-items:center;gap:4px;font-size:10px;cursor:pointer;padding:4px 8px;border-radius:var(--radius-sm);border:1.5px solid ${editingIsReturn?'var(--error)':'var(--border)'};background:${editingIsReturn?'rgba(239,68,68,0.08)':'var(--surface)'};color:${editingIsReturn?'var(--error)':'var(--text-secondary)'};transition:var(--transition)"><input type="checkbox" ${editingIsReturn?'checked':''} onchange="editingIsReturn=this.checked;renderPOS(document.getElementById('contentArea'))" style="display:none"><span class="material-icons-round" style="font-size:15px">${editingIsReturn?'check_box':'check_box_outline_blank'}</span> مرتجع</label>`:''}
@@ -493,9 +624,12 @@ function renderPOS(area) {
                     </div>
                 </div>
                 <!-- Third Row: Product Search -->
-                <div style="padding:0 10px 8px;position:relative">
-                    <input class="form-control" placeholder="🔍 ابحث عن صنف أو امسح باركود..." id="posSearch" oninput="searchPOSProducts(this.value)" onfocus="searchPOSProducts(this.value)" autocomplete="off" style="padding:6px 10px;font-size:12px;border-radius:var(--radius-sm)">
-                    <div id="posProductsDropdown" style="display:none;position:absolute;top:100%;right:10px;left:10px;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-sm);max-height:200px;overflow-y:auto;z-index:50;box-shadow:var(--shadow-lg);margin-top:2px"></div>
+                <div style="padding:0 10px 8px;position:relative;display:flex;gap:6px;align-items:center">
+                    <button onclick="openBarcodeScanner('pos')" style="flex-shrink:0;width:36px;height:36px;border-radius:var(--radius-sm);border:1px solid var(--border);background:var(--surface);color:var(--primary);display:flex;align-items:center;justify-content:center;cursor:pointer" title="مسح بالكاميرا"><span class="material-icons-round" style="font-size:20px">qr_code_scanner</span></button>
+                    <div style="flex:1;position:relative">
+                        <input class="form-control" placeholder="🔍 ابحث عن صنف أو امسح باركود..." id="posSearch" oninput="searchPOSProducts(this.value)" onfocus="searchPOSProducts(this.value)" autocomplete="off" style="padding:6px 10px;font-size:12px;border-radius:var(--radius-sm)">
+                        <div id="posProductsDropdown" style="display:none;position:absolute;top:100%;right:0;left:0;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-sm);max-height:200px;overflow-y:auto;z-index:50;box-shadow:var(--shadow-lg);margin-top:2px"></div>
+                    </div>
                 </div>
             </div>
 
@@ -514,9 +648,13 @@ function renderPOS(area) {
                         <label style="font-size:10px;font-weight:600;color:var(--text-secondary);display:block;margin-bottom:3px">الخصم</label>
                         <input class="form-control" type="number" id="cartDiscountInput" value="${cartDiscount||''}" onchange="updateCartDiscount(this.value)" style="padding:6px 10px;font-size:12px;border-radius:var(--radius-sm)">
                     </div>
+                    <div style="margin-bottom:8px">
+                        <label style="font-size:10px;font-weight:600;color:var(--text-secondary);display:block;margin-bottom:3px">الضريبة (رقم)</label>
+                        <input class="form-control" type="number" id="cartTaxInput" value="${curTax||''}" onchange="updateCartTax(this.value)" style="padding:6px 10px;font-size:12px;border-radius:var(--radius-sm)">
+                    </div>
                     <div style="display:flex;justify-content:space-between;margin-bottom:4px;font-size:11px"><span style="color:var(--text-muted)">المجموع الفرعي</span><span id="cartSubtotal" style="font-weight:600">0.00 ج.م</span></div>
                     <div style="display:flex;justify-content:space-between;margin-bottom:4px;font-size:11px"><span style="color:var(--text-muted)">الخصم</span><span style="color:var(--error);font-weight:600" id="cartDiscountDisplay">0.00 ج.م</span></div>
-                    <div style="display:flex;justify-content:space-between;margin-bottom:4px;font-size:11px"><span style="color:var(--text-muted)">الضريبة (${getTaxRate()}%)</span><span id="cartTax" style="font-weight:600">0.00 ج.م</span></div>
+                    <div style="display:flex;justify-content:space-between;margin-bottom:4px;font-size:11px"><span style="color:var(--text-muted)">الضريبة</span><span id="cartTax" style="font-weight:600">0.00 ج.م</span></div>
                     <div id="posCreditFields" style="display:none;border-top:1px solid var(--border-light);padding-top:6px;margin-top:4px">
                         <div class="form-group" style="margin-bottom:4px"><label style="font-size:10px;font-weight:600">المبلغ المدفوع</label><input class="form-control" type="number" id="posPaidInput" value="0" onchange="updatePosCredit()" oninput="updatePosCredit()" style="padding:5px 8px;font-size:12px;border-radius:var(--radius-sm)"></div>
                         <div style="display:flex;justify-content:space-between;font-size:12px;padding:4px 0"><span style="color:var(--text-muted);font-weight:600">المتبقي</span><span id="posRemaining" style="color:var(--error);font-weight:800;font-size:13px">0.00 ج.م</span></div>
@@ -541,6 +679,7 @@ function renderPOS(area) {
             </div>
         </div>`;
     setTimeout(() => document.getElementById('posSearch')?.focus(), 100);
+    updateCart();
 }
 
 function searchPosCustomer(q) {
@@ -577,7 +716,11 @@ function searchPOSProducts(q) {
         return;
     }
     const found = products.filter(p => p.name.toLowerCase().includes(q.toLowerCase()) || (p.barcode||'').includes(q));
-    if (found.length === 0) { dd.innerHTML = '<div style="padding:12px;color:var(--text-secondary);font-size:12px;text-align:center">لا توجد نتائج</div>'; dd.style.display = 'block'; return; }
+    if (found.length === 0) {
+        window._posNewName = q;
+        dd.innerHTML = '<div onclick="quickAddProduct()" style="padding:10px;cursor:pointer;color:var(--primary);font-size:12px;font-weight:700;text-align:center;border:1px dashed var(--border);border-radius:var(--radius-sm);margin:4px">➕ إضافة صنف جديد: «' + q.replace(/</g,'&lt;') + '»</div>';
+        dd.style.display = 'block'; return;
+    }
 
     found.sort((a, b) => a.name.localeCompare(b.name, 'ar'));
 
@@ -604,6 +747,47 @@ function togglePosDetails() {
     if (arrow) arrow.style.transform = isOpen ? 'rotate(180deg)' : 'rotate(0deg)';
 }
 
+function quickAddProduct() {
+    const name = (window._posNewName || '').trim();
+    if (!name) return;
+    const cats = DB.get('categories') || [];
+    const defCat = (cats.find(c => c.name === 'بدون تصنيف')) || cats[0] || { id: 'wh1' };
+    const units = DB.get('units') || [];
+    const defUnit = units[0] ? units[0].name : 'قطعة';
+    openModal('إضافة صنف سريعة', `
+        <div style="font-size:12px;color:var(--text-secondary);margin-bottom:10px">${name.replace(/</g,'&lt;')}</div>
+        <div class="form-group"><label>سعر البيع</label><input type="number" id="qaPrice" class="form-control" value="0" style="padding:8px 10px"></div>
+        <div class="form-group"><label>سعر التكلفة (اختياري)</label><input type="number" id="qaCost" class="form-control" value="0" style="padding:8px 10px"></div>
+        <div class="form-group"><label>باركود (اختياري)</label><input id="qaBarcode" class="form-control" value="" style="padding:8px 10px"></div>
+        <div class="form-group"><label>الوحدة</label><input id="qaUnit" class="form-control" value="${defUnit}" style="padding:8px 10px"></div>
+    `, `<button class="btn btn-primary" onclick="confirmQuickAdd()"><span class="material-icons-round">add</span> إضافة للسلة</button><button class="btn btn-outline" onclick="closeModal()">إلغاء</button>`);
+    setTimeout(() => { const e = document.getElementById('qaPrice'); if (e) e.focus(); }, 100);
+}
+
+function confirmQuickAdd() {
+    const name = (window._posNewName || '').trim();
+    const price = parseFloat(document.getElementById('qaPrice') && document.getElementById('qaPrice').value) || 0;
+    const cost = parseFloat(document.getElementById('qaCost') && document.getElementById('qaCost').value) || 0;
+    const barcode = (document.getElementById('qaBarcode') && document.getElementById('qaBarcode').value || '').trim();
+    const unit = (document.getElementById('qaUnit') && document.getElementById('qaUnit').value || '').trim() || 'قطعة';
+    if (!name) return;
+    const products = DB.get('products');
+    const cat = (DB.get('categories').find(c => c.name === 'بدون تصنيف')) || DB.get('categories')[0] || {};
+    const p = {
+        id: uid(), name, barcode, unit,
+        units: [{ name: unit, factor: 1, price: price }],
+        image: '', costPrice: cost, sellingPrice: price, quantity: 0, minQuantity: 0,
+        categoryId: cat.id, warehouseId: 'wh1', isActive: true
+    };
+    products.unshift(p);
+    DB.set('products', products);
+    addToCart(p.id, price, 1);
+    closeModal();
+    const s = document.getElementById('posSearch'); if (s) s.value = '';
+    const dd = document.getElementById('posProductsDropdown'); if (dd) dd.style.display = 'none';
+    toast('تمت إضافة الصنف للسلة', 'success');
+}
+
 function addToCart(productId, price, qty) {
     const products = DB.get('products');
     const product = products.find(p => p.id === productId);
@@ -616,7 +800,7 @@ function addToCart(productId, price, qty) {
         existing.quantity += qty;
     } else {
         if (qty > product.quantity) { toast('لا يوجد مخزون كافٍ','warning'); return; }
-        cart.push({ productId:product.id, productName:product.name, unitPrice:price, quantity:qty, discount:0, taxRate:getTaxRate() });
+        cart.push({ productId:product.id, productName:product.name, unitPrice:price, quantity:qty, discount:0, taxRate:getTaxRate(), buy: product.buyingPrice||0 });
     }
     updateCart();
 }
@@ -639,9 +823,10 @@ function updateCartItemDiscount(idx, val) {
     cart[idx].discount = parseFloat(val) || 0;
     updateCart();
 }
-function clearCart() { cart=[]; posCustomerId=''; posCustomerName=''; cartDiscount=0; const inp=document.getElementById('posCustomerInput'); if(inp) inp.value=''; updateCart(); }
+function clearCart() { cart=[]; posCustomerId=''; posCustomerName=''; cartDiscount=0; curTax=0; const inp=document.getElementById('posCustomerInput'); if(inp) inp.value=''; updateCart(); }
 function updateCartDiscount(val) { cartDiscount = parseFloat(val)||0; updateCart(); }
 function updateCartDiscountType(val) { cartDiscountType = val; updateCart(); }
+function updateCartTax(val) { curTax = parseFloat(val)||0; updateCart(); }
 
 function updatePosPayUI() {
     const creditFields = document.getElementById('posCreditFields');
@@ -655,7 +840,7 @@ function updatePosCredit() {
     const itemDiscounts = cart.reduce((s,i) => s+(i.discount||0),0);
     let invDiscount = cartDiscountType==='percent'?(subtotal-itemDiscounts)*cartDiscount/100:cartDiscount;
     const taxable = subtotal - itemDiscounts - invDiscount;
-    const tax = taxable * taxRate / 100;
+    const tax = curTax || 0;
     const total = taxable + tax;
     const paid = parseFloat(document.getElementById('posPaidInput')?.value)||0;
     const remaining = total - paid;
@@ -670,7 +855,7 @@ function saveSaleDirect() {
     const itemDiscounts = cart.reduce((s,i) => s+(i.discount||0),0);
     let invDiscount = cartDiscountType==='percent'?(subtotal-itemDiscounts)*cartDiscount/100:cartDiscount;
     const taxable = subtotal - itemDiscounts - invDiscount;
-    const tax = taxable * taxRate / 100;
+    const tax = curTax || 0;
     const total = taxable + tax;
     const method = posPaymentMethod;
     let paidAmount = 0;
@@ -734,8 +919,73 @@ function saveSaleDirect() {
             <p style="margin-top:8px;font-size:14px">فاتورة رقم <strong>${invoice.invoiceNumber}</strong></p>
             <p style="font-size:12px;color:var(--text-secondary)">${fmt(invoice.total)}</p>
         </div>
-    `, `<button class="btn btn-primary" onclick="printReceipt(window._lastInvoice);closeModal()"><span class="material-icons-round">print</span> طباعة إيصال</button><button class="btn btn-outline" onclick="closeModal()">إغلاق</button>`);
-    setTimeout(()=>renderPOS(document.getElementById('contentArea')),100);
+        `, `<button class="btn btn-primary" onclick="confirmPrint('${invoice.id}');closeModal()"><span class="material-icons-round">print</span> طباعة إيصال</button><button class="btn btn-success" onclick="shareInvoiceWhatsapp('${invoice.id}');closeModal()"><span class="material-icons-round">share</span> واتساب</button><button class="btn btn-outline" onclick="closeModal()">إغلاق</button>`);
+    setTimeout(()=>showScreen('invoices'),100);
+}
+
+function saveQuote() {
+    if (cart.length===0) { toast('السلة فارغة','error'); return; }
+    const subtotal = cart.reduce((s,i)=>s+i.unitPrice*i.quantity,0);
+    const itemDiscounts = cart.reduce((s,i)=>s+(i.discount||0),0);
+    const invDiscount = cartDiscountType==='percent'?(subtotal-itemDiscounts)*cartDiscount/100:cartDiscount;
+    const taxable = subtotal - itemDiscounts - invDiscount;
+    const tax = curTax || 0;
+    const total = taxable + tax;
+    const quote = {
+        id:uid(), quoteNumber:nextQuoteNumber(), items:[...cart],
+        subtotal, discount:invDiscount+itemDiscounts, taxAmount:tax, total,
+        customerId:posCustomerId, customerName:posCustomerName==='عميلنقدي'?'':posCustomerName,
+        notes:posNotes||'', status:'quote', createdAt:new Date().toISOString()
+    };
+    const quotes = DB.get('quotes'); quotes.unshift(quote); DB.set('quotes', quotes);
+    cart=[]; posCustomerId=''; posCustomerName=''; cartDiscount=0; cartDiscountType='amount'; posPaymentMethod='cash'; posNotes='';
+    toast('تم حفظ عرض السعر','success');
+    setTimeout(()=>showScreen('quotes'),100);
+}
+function convertQuoteToInvoice(id) {
+    const quotes = DB.get('quotes');
+    const q = quotes.find(x=>x.id===id);
+    if (!q) return;
+    if (q.status==='converted') { toast('هذه العرض حولت بالفعل','error'); return; }
+    cart = q.items.map(it=>({ productId:it.productId, productName:it.productName, unitPrice:it.unitPrice, quantity:it.quantity, discount:it.discount||0, taxRate:getTaxRate(), buy: it.buy || it.unitPrice }));
+    posCustomerId = q.customerId||''; posCustomerName = q.customerName||'عميلنقدي';
+    cartDiscountType='amount'; cartDiscount=0; curTax = q.taxAmount||0;
+    posMode='invoice'; editingInvoiceId=null; editingIsReturn=false;
+    DB.set('quotes', quotes.map(x=>x.id===id?{...x,status:'converted'}:x));
+    showScreen('pos'); updateCart();
+    toast('تم تحميل العرض كفاتورة — اضغط حفظ');
+}
+function renderQuotes(area) {
+    const quotes = DB.get('quotes');
+    const open = quotes.filter(q=>q.status!=='converted').sort((a,b)=>new Date(b.createdAt)-new Date(a.createdAt));
+    area.innerHTML = `
+        <div style="display:flex;align-items:center;gap:6px;margin-bottom:10px">
+            <button class="btn btn-sm btn-outline" onclick="showScreen('dashboard')"><span class="material-icons-round" style="font-size:16px">arrow_forward</span></button>
+            <h2 style="font-size:16px;font-weight:800"><span class="material-icons-round" style="vertical-align:middle;color:var(--primary);font-size:18px">request_quote</span> عروض الأسعار والطلبيات</h2>
+        </div>
+        ${open.length===0?'<div style="text-align:center;padding:40px;color:var(--text-secondary)"><span class="material-icons-round" style="font-size:48px">description</span><p style="margin-top:8px">لا توجد عروض أسعار</p></div>':
+        `<div class="section-card"><div class="table-container"><table id="quotesTable"><thead><tr><th>رقم</th><th>العميل</th><th>الإجمالي</th><th>التاريخ</th><th>إجراءات</th></tr></thead><tbody>
+        ${open.map(q=>`<tr>
+            <td><strong>${q.quoteNumber}</strong></td>
+            <td>${q.customerName||'نقدي'}</td>
+            <td style="font-weight:700">${fmt(q.total)}</td>
+            <td>${fmtDate(q.createdAt)}</td>
+            <td style="white-space:nowrap">
+                <button class="btn btn-xs btn-primary" onclick="convertQuoteToInvoice('${q.id}')" title="تحويل لفاتورة"><span class="material-icons-round" style="font-size:14px">receipt_long</span></button>
+                <button class="btn btn-xs btn-outline" onclick="printQuote('${q.id}')" title="طباعة"><span class="material-icons-round" style="font-size:14px">print</span></button>
+                <button class="btn btn-xs btn-danger" onclick="confirmModal('حذف عرض السعر؟', ()=>deleteQuote('${q.id}'))" title="حذف"><span class="material-icons-round" style="font-size:14px">delete</span></button>
+            </td>
+        </tr>`).join('')}
+        </tbody></table></div>`}`;
+}
+function deleteQuote(id) {
+    DB.set('quotes', DB.get('quotes').filter(q=>q.id!==id));
+    toast('تم الحذف'); renderScreen(currentScreen);
+}
+function printQuote(id) {
+    const q = DB.get('quotes').find(x=>x.id===id); if (!q) return;
+    const inv = { invoiceNumber:'عرض '+q.quoteNumber, createdAt:q.createdAt, customerName:q.customerName||'نقدي', items:q.items, subtotal:q.subtotal, discount:q.discount, taxAmount:q.taxAmount, total:q.total, paidAmount:0, remainingAmount:q.total };
+    printReceipt(inv);
 }
 
 function saveEditSale(id, printAfter) {
@@ -746,14 +996,14 @@ function saveEditSale(id, printAfter) {
     const oldInv = invoices[idx];
 
     const products = DB.get('products');
-    oldInv.items.forEach(item => { const p = products.find(x => x.id === item.productId); if (p) p.quantity += item.quantity; });
+    oldInv.items.forEach(item => { const p = products.find(x => x.id === item.productId); if (p) p.quantity += (oldInv.isReturn ? -item.quantity : item.quantity); });
 
     const taxRate = getTaxRate();
     const subtotal = cart.reduce((s,i) => s+i.unitPrice*i.quantity, 0);
     const itemDiscounts = cart.reduce((s,i) => s+(i.discount||0),0);
     let invDiscount = cartDiscountType==='percent'?(subtotal-itemDiscounts)*cartDiscount/100:cartDiscount;
     const taxable = subtotal - itemDiscounts - invDiscount;
-    const tax = taxable * taxRate / 100;
+    const tax = curTax || 0;
     const total = taxable + tax;
     const method = posPaymentMethod;
     let paidAmount = method==='cash' ? total : parseFloat(document.getElementById('posPaidInput')?.value)||0;
@@ -767,6 +1017,7 @@ function saveEditSale(id, printAfter) {
     oldInv.taxAmount = tax;
     oldInv.total = total;
     oldInv.paidAmount = paidAmount;
+    const oldRemainingAmt = oldInv.remainingAmount || 0;
     oldInv.remainingAmount = remaining;
     oldInv.paymentMethod = method==='cash'?'نقدي':'آجل';
     oldInv.status = status;
@@ -786,8 +1037,7 @@ function saveEditSale(id, printAfter) {
         const customers = DB.get('customers');
         const c = customers.find(x => x.id===posCustomerId);
         if (c) {
-            const oldRemaining = oldInv.remainingAmount || 0;
-            c.balance = (c.balance||0) - oldRemaining + remaining;
+            c.balance = (c.balance||0) - oldRemainingAmt + remaining;
             DB.set('customers', customers);
         }
     }
@@ -804,60 +1054,75 @@ function saveEditSale(id, printAfter) {
                 <p style="margin-top:8px;font-size:14px">فاتورة رقم <strong>${oldInv.invoiceNumber}</strong></p>
                 <p style="font-size:12px;color:var(--text-secondary)">${fmt(oldInv.total)}</p>
             </div>
-        `, `<button class="btn btn-primary" onclick="printReceipt(window._lastInvoice);closeModal()"><span class="material-icons-round">print</span> طباعة إيصال</button><button class="btn btn-outline" onclick="closeModal()">إغلاق</button>`);
+    `, `<button class="btn btn-primary" onclick="printReceipt(window._lastInvoice);closeModal()"><span class="material-icons-round">print</span> طباعة إيصال</button><button class="btn btn-success" onclick="shareInvoiceWhatsapp('${oldInv.id}');closeModal()"><span class="material-icons-round">share</span> واتساب</button><button class="btn btn-outline" onclick="closeModal()">إغلاق</button>`);
     }
-    setTimeout(()=>renderPOS(document.getElementById('contentArea')),100);
+    setTimeout(()=>showScreen('invoices'),100);
 }
 
 function printCurrentPosCart() {
-    if (!cart.length) { showToast('السلة فارغة', 'error'); return; }
+    if (!cart.length) { toast('السلة فارغة', 'error'); return; }
     const s = DB.getOne('settings') || {};
     const subtotal = cart.reduce((sum, item) => sum + item.unitPrice * item.quantity, 0);
     const itemDiscounts = cart.reduce((sum, item) => sum + (item.discount || 0), 0);
     const invDiscount = cartDiscountType === 'percent' ? (subtotal - itemDiscounts) * cartDiscount / 100 : cartDiscount;
     const taxable = subtotal - itemDiscounts - invDiscount;
-    const taxRate = getTaxRate();
-    const tax = s.enableTax !== false ? taxable * taxRate / 100 : 0;
+    const tax = curTax || 0;
     const total = taxable + tax;
-    const itemsHtml = cart.map(item => {
-        const lineTotal = item.unitPrice * item.quantity - (item.discount || 0);
-        return `<div class="item-line"><span>${item.name} × ${item.quantity}${item.discount ? ' (-' + Number(item.discount).toFixed(2) + ')' : ''}</span><span>${Number(lineTotal).toFixed(2)} ${s.currency || 'ج.م'}</span></div>`;
-    }).join('');
-    const html = `<!DOCTYPE html><html lang="ar" dir="rtl"><head><meta charset="UTF-8"><title>فاتورة مبيعات</title><style>@page{size:80mm auto;margin:0}body{font-family:'Courier New',monospace;width:80mm;margin:0 auto;padding:5mm;font-size:12px}h2{text-align:center;margin:0 0 5px;font-size:16px}.receipt{width:100%}.item-line{display:flex;justify-content:space-between;font-size:11px;margin:2px 0}.total-line{display:flex;justify-content:space-between;font-size:14px;font-weight:bold;margin-top:8px;border-top:2px solid #000;padding-top:8px}hr{border:none;border-top:1px dashed #000;margin:10px 0}.footer{text-align:center;font-size:10px;color:#666;margin-top:10px}</style></head><body><div class="receipt"><h2>${s.storeName || 'فاتورة مبيعات'}</h2><p style="text-align:center;font-size:10px;color:#666">${s.storeAddress || ''}</p><hr>${itemsHtml}<hr><div class="total-line"><span>الإجمالي</span><span>${Number(total).toFixed(2)} ${s.currency || 'ج.م'}</span></div><div class="footer"><p>شكراً لشرائكم</p></div></div><script>window.onload=function(){window.print();}<\/script></body></html>`;
-    const w = window.open('', '_blank', 'width=400,height=600');
-    w.document.write(html); w.document.close();
+    const inv = {
+        invoiceNumber: 'مسودة', createdAt: new Date().toISOString(), customerName: posCustomerName || 'نقدي',
+        items: cart.map(item => ({ productName: item.name, quantity: item.quantity, unitPrice: item.unitPrice, discount: item.discount || 0 })),
+        subtotal: taxable, discount: invDiscount, taxAmount: tax, total, paidAmount: 0, remainingAmount: total
+    };
+    printReceipt(inv);
 }
 
 function printReceipt(inv) {
     if (!inv) return;
     const s = DB.getOne('settings') || {};
+    if (s.bluetoothThermal) {
+        if (!btChar) { toast('الطابعة الحرارية غير متصلة — فعّل الاتصال من الإعدادات', 'error'); return; }
+        printThermalReceipt(inv, 'sale');
+        return;
+    }
+    openSaleWindow(inv);
+}
+function openSaleWindow(inv) {
+    if (!inv) return;
+    const s = DB.getOne('settings') || {};
+    const logoHtml = s.storeLogo ? `<img src="${s.storeLogo}" style="width:60px;height:60px;object-fit:contain;margin-bottom:4px;border-radius:8px">` : `<div style="width:50px;height:50px;margin:0 auto 4px;border-radius:50%;background:linear-gradient(135deg,#2563EB,#7C3AED);display:flex;align-items:center;justify-content:center"><span style="font-size:20px;color:white;font-weight:800">${(s.storeName||s.companyName||'م')[0]}</span></div>`;
     const itemsHtml = inv.items.map(item => {
         const lineTotal = item.unitPrice * item.quantity - (item.discount||0);
-        const discText = item.discount > 0 ? ` <span style="color:red;font-size:10px">-${fmt(item.discount)}</span>` : '';
-        return `<div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:2px"><span>${item.productName} x${item.quantity}${discText}</span><span>${fmt(lineTotal)}</span></div>`;
+        const discText = item.discount > 0 ? `\n  <span style="color:#EF4444;font-size:10px">خصم: -${fmt(item.discount)}</span>` : '';
+        return `<div style="display:flex;justify-content:space-between;font-size:11px;margin-bottom:3px;border-bottom:1px dotted #eee;padding-bottom:3px"><div style="flex:1"><div style="font-weight:600">${item.productName}</div><div style="font-size:10px;color:#666">${item.quantity} × ${fmt(item.unitPrice)}${discText}</div></div><div style="font-weight:700">${fmt(lineTotal)}</div></div>`;
     }).join('');
     const receiptHtml = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>إيصال</title><style>
-        body{font-family:'Courier New',monospace;text-align:center;padding:10px;max-width:300px;margin:0 auto;font-size:12px}
-        .line{border-top:1px dashed #000;margin:8px 0}
-        .total{font-size:16px;font-weight:bold;border-top:2px solid #000;margin-top:8px;padding-top:8px}
+        @page{size:80mm auto;margin:0}
+        body{font-family:'Cairo','Courier New',monospace;text-align:center;padding:8px 6px;max-width:302px;margin:0 auto;font-size:12px;color:#1a1a1a}
+        .line{border-top:1px dashed #ccc;margin:6px 0}
+        .total{font-size:15px;font-weight:bold;border-top:2px solid #000;margin-top:6px;padding-top:6px}
+        .footer{margin-top:8px;font-size:10px;color:#888;border-top:1px dashed #ccc;padding-top:6px}
     </style></head><body>
-        <h2 style="font-size:16px;margin:0">${s.companyName||s.storeName||''}</h2>
-        <p style="margin:2px 0;font-size:11px">${s.storePhone||''} ${s.storeAddress?'| '+s.storeAddress:''}</p>
+        ${logoHtml}
+        <h2 style="font-size:15px;margin:0;font-weight:800">${s.storeName||s.companyName||''}</h2>
+        <p style="margin:2px 0;font-size:10px;color:#666">${s.storePhone||''}${s.storePhone&&s.storeAddress?' | ':''}${s.storeAddress||''}</p>
         <div class="line"></div>
-        <div style="text-align:right"><strong>فاتورة رقم:</strong> ${inv.invoiceNumber}</div>
-        <div style="text-align:right;font-size:11px">التاريخ: ${fmtDateTime(inv.createdAt)}</div>
-        <div style="text-align:right;font-size:11px">العميل: ${inv.customerName||'نقدي'}</div>
+        <div style="display:flex;justify-content:space-between;font-size:11px"><div style="text-align:right"><strong>فاتورة #${inv.invoiceNumber}</strong></div><div>${fmtDate(inv.createdAt)}</div></div>
+        <div style="text-align:right;font-size:11px;color:#666;margin-top:2px">العميل: ${inv.customerName||'نقدي'}</div>
+        <div style="text-align:right;font-size:11px;color:#666">الدفع: ${inv.paymentMethod==='cash'?'نقداً':'آجل'}</div>
         <div class="line"></div>
         ${itemsHtml}
         <div class="line"></div>
-        ${inv.discount>0?`<div style="display:flex;justify-content:space-between;font-size:12px"><span>الخصم</span><span style="color:red">-${fmt(inv.discount)}</span></div>`:''}
-        ${inv.taxAmount>0?`<div style="display:flex;justify-content:space-between;font-size:12px"><span>الضريبة</span><span>${fmt(inv.taxAmount)}</span></div>`:''}
+        <div style="display:flex;justify-content:space-between;font-size:11px"><span>المجموع الفرعي</span><span>${fmt(inv.subtotal||inv.total)}</span></div>
+        ${inv.discount>0?`<div style="display:flex;justify-content:space-between;font-size:11px"><span>الخصم</span><span style="color:#EF4444">-${fmt(inv.discount)}</span></div>`:''}
+        ${inv.taxAmount>0?`<div style="display:flex;justify-content:space-between;font-size:11px"><span>الضريبة</span><span>${fmt(inv.taxAmount)}</span></div>`:''}
         <div class="total" style="display:flex;justify-content:space-between"><span>الإجمالي</span><span>${fmt(inv.total)}</span></div>
-        <div style="display:flex;justify-content:space-between;font-size:12px;margin-top:4px"><span>المدفوع</span><span>${fmt(inv.paidAmount)}</span></div>
-        ${inv.remainingAmount>0?`<div style="display:flex;justify-content:space-between;font-size:12px;color:red"><span>المتبقي</span><span>${fmt(inv.remainingAmount)}</span></div>`:''}
-        <div class="line"></div>
-        <p style="font-size:11px;margin:4px 0">شكراً لزيارتكم</p>
-        <script>window.onload=function(){window.print();window.close()}<\/script>
+        <div style="display:flex;justify-content:space-between;font-size:11px;margin-top:3px"><span>المدفوع</span><span style="font-weight:600">${fmt(inv.paidAmount)}</span></div>
+        ${inv.remainingAmount>0?`<div style="display:flex;justify-content:space-between;font-size:11px;color:#EF4444"><span>المتبقي</span><span style="font-weight:700">${fmt(inv.remainingAmount)}</span></div>`:''}
+        <div class="footer">
+            <p style="margin:0">شكراً لزيارتكم</p>
+            <p style="margin:2px 0 0;font-size:9px">${s.storeName||''} | ${fmtDateTime(inv.createdAt)}</p>
+        </div>
+        <script>window.onload=function(){window.print();setTimeout(()=>window.close(),500)}<\/script>
     </body></html>`;
     const w = window.open('','_blank');
     w.document.write(receiptHtml);
@@ -869,9 +1134,36 @@ function printInvoiceById(id) {
     if (inv) printReceipt(inv);
 }
 
+function confirmPrint(invId) {
+    const inv = DB.get('invoices').find(i=>i.id===invId);
+    if (inv) printReceipt(inv);
+}
+
 function printPurchaseInvoiceById(id) {
     const inv = DB.get('invoices').find(i=>i.id===id);
     if (inv) printPurchaseReceipt(inv);
+}
+
+function shareInvoiceWhatsapp(id) {
+    const inv = DB.get('invoices').find(i=>i.id===id);
+    if (!inv) { toast('الفاتورة غير موجودة','error'); return; }
+    const type = inv.type==='purchase' ? 'فاتورة شراء' : 'فاتورة بيع';
+    const R = '‏';
+    let txt = `${R}*${type} #${inv.invoiceNumber}*\n`;
+    txt += `التاريخ: ${fmtDate(inv.createdAt)}\n`;
+    txt += `الطرف: ${inv.customerName || (inv.type==='purchase'?'—':'نقدي')}\n`;
+    txt += `————————\n`;
+    (inv.items||[]).forEach(it => {
+        const line = it.unitPrice*it.quantity - (it.discount||0);
+        txt += `${it.productName} × ${it.quantity} @ ${fmt(it.unitPrice)}${it.discount>0?` (خصم ${fmt(it.discount)})`:''} = ${fmt(line)}\n`;
+    });
+    txt += `————————\n`;
+    if (inv.discount>0) txt += `الخصم: ${fmt(inv.discount)}\n`;
+    if (inv.taxAmount>0) txt += `الضريبة: ${fmt(inv.taxAmount)}\n`;
+    txt += `الإجمالي: ${fmt(inv.total)}\n`;
+    if (inv.remainingAmount>0) txt += `المتبقي: ${fmt(inv.remainingAmount)}\n`;
+    const url = 'https://api.whatsapp.com/send?text=' + encodeURIComponent(txt);
+    window.open(url, '_blank');
 }
 
 function updateCart() {
@@ -905,7 +1197,7 @@ function updateCart() {
     if (cartDiscountType==='percent') invDiscount = (subtotal-itemDiscounts) * cartDiscount / 100;
     else invDiscount = cartDiscount;
     const taxable = subtotal - itemDiscounts - invDiscount;
-    const tax = taxable * taxRate / 100;
+    const tax = curTax || 0;
     const total = taxable + tax;
 
     const countEl = document.getElementById('cartCount');
@@ -925,15 +1217,14 @@ function updateCart() {
 function holdInvoice() {
     if (cart.length===0) { toast('السلة فارغة','error'); return; }
     const held = DB.getOne('heldInvoices') || [];
-    const taxRate = getTaxRate();
     const subtotal = cart.reduce((s,i) => s+i.unitPrice*i.quantity, 0);
     const itemDiscounts = cart.reduce((s,i) => s+(i.discount||0), 0);
     let invDiscount = cartDiscountType==='percent'?(subtotal-itemDiscounts)*cartDiscount/100:cartDiscount;
     const taxable = subtotal - itemDiscounts - invDiscount;
-    const total = taxable * (1+taxRate/100);
-    held.push({ items:[...cart], customerId:posCustomerId, customerName:posCustomerName, discount:cartDiscount, discountType:cartDiscountType, total, createdAt:new Date().toISOString() });
+    const total = taxable + (curTax||0);
+    held.push({ items:[...cart], customerId:posCustomerId, customerName:posCustomerName, discount:cartDiscount, discountType:cartDiscountType, tax:curTax||0, total, createdAt:new Date().toISOString() });
     DB.setOne('heldInvoices', held);
-    cart=[]; posCustomerId=''; posCustomerName=''; cartDiscount=0; cartDiscountType='amount';
+    cart=[]; posCustomerId=''; posCustomerName=''; cartDiscount=0; curTax=0; cartDiscountType='amount';
     toast('تم تعليق الفاتورة');
     renderPOS(document.getElementById('contentArea'));
 }
@@ -947,6 +1238,7 @@ function resumeHeld(idx) {
     posCustomerName = h.customerName || '';
     cartDiscount = h.discount || 0;
     cartDiscountType = h.discountType || 'amount';
+    curTax = h.tax || 0;
     held.splice(idx,1);
     DB.setOne('heldInvoices', held);
     posMode = 'invoice';
@@ -969,7 +1261,7 @@ function openPaymentModal() {
     const itemDiscounts = cart.reduce((s,i) => s+(i.discount||0),0);
     let invDiscount = cartDiscountType==='percent'?(subtotal-itemDiscounts)*cartDiscount/100:cartDiscount;
     const taxable = subtotal - itemDiscounts - invDiscount;
-    const tax = taxable * taxRate / 100;
+    const tax = curTax || 0;
     const total = taxable + tax;
 
     openModal('إتمام البيع', `
@@ -1019,7 +1311,7 @@ function completeSale() {
     const itemDiscounts = cart.reduce((s,i) => s+(i.discount||0),0);
     let invDiscount = cartDiscountType==='percent'?(subtotal-itemDiscounts)*cartDiscount/100:cartDiscount;
     const taxable = subtotal - itemDiscounts - invDiscount;
-    const tax = taxable * taxRate / 100;
+    const tax = curTax || 0;
     const total = taxable + tax;
     const paidAmount = parseFloat(document.getElementById('paidAmount')?.value)||0;
     const method = window._payMethod || 'cash';
@@ -1135,7 +1427,7 @@ function editInvoice(id) {
     if (!inv) return;
 
     if (inv.type === 'sale') {
-        cart = inv.items.map(item => ({ productId: item.productId, productName: item.productName, unitPrice: item.unitPrice, quantity: item.quantity, discount: item.discount || 0, taxRate: item.taxRate || 14 }));
+        cart = inv.items.map(item => ({ productId: item.productId, productName: item.productName, unitPrice: item.unitPrice, quantity: item.quantity, discount: item.discount || 0, taxRate: 0, buy: item.buy || item.unitPrice }));
         posCustomerId = inv.customerId || '';
         posCustomerName = inv.customerName || '';
         cartDiscount = inv.discount || 0;
@@ -1146,8 +1438,10 @@ function editInvoice(id) {
         editingIsReturn = inv.isReturn || false;
         posMode = 'invoice';
         renderPOS(document.getElementById('contentArea'));
+        const pp = document.getElementById('posPaidInput'); if (pp) pp.value = inv.paidAmount||0;
+        updatePosCredit();
     } else {
-        purCart = inv.items.map(item => ({ productId: item.productId, productName: item.productName, unitPrice: item.unitPrice, quantity: item.quantity, discount: item.discount || 0, taxRate: item.taxRate || 14 }));
+        purCart = inv.items.map(item => ({ productId: item.productId, productName: item.productName, unitPrice: item.unitPrice, quantity: item.quantity, discount: item.discount || 0, taxRate: 0, buy: item.buy || item.unitPrice }));
         purSupplierId = inv.customerId || '';
         purSupplierName = inv.customerName || '';
         purDiscount = inv.discount || 0;
@@ -1158,6 +1452,8 @@ function editInvoice(id) {
         editingPurIsReturn = inv.isReturn || false;
         purMode = 'invoice';
         renderPurchases(document.getElementById('contentArea'));
+        const pp2 = document.getElementById('purPaidInput'); if (pp2) pp2.value = inv.paidAmount||0;
+        updatePurCredit();
     }
     closeSidebar();
 }
@@ -1176,6 +1472,7 @@ function renderProducts(area) {
             </div>
             <div style="display:flex;gap:4px;align-items:center">
                 <button class="btn btn-sm btn-outline" onclick="openCategoryModal()"><span class="material-icons-round" style="font-size:14px">label</span> التصنيفات</button>
+                <button class="btn btn-sm btn-outline" onclick="openUnitModal()"><span class="material-icons-round" style="font-size:14px">straighten</span> الوحدات</button>
                 <button class="btn btn-sm btn-outline" onclick="exportInventoryCSV()"><span class="material-icons-round" style="font-size:14px">file_download</span> CSV</button>
                 <button class="btn btn-sm btn-outline" onclick="exportInventoryPDF()"><span class="material-icons-round" style="font-size:14px">picture_as_pdf</span> PDF</button>
                 ${canDo('pos')?`<button class="btn btn-sm btn-primary" onclick="openProductModal()"><span class="material-icons-round">add</span> إضافة</button>`:''}
@@ -1275,6 +1572,69 @@ function deleteCategory(id) {
     });
 }
 
+function openUnitModal() {
+    const units = DB.get('units');
+    const products = DB.get('products');
+    openModal('إدارة الوحدات', `
+        <div style="margin-bottom:12px;display:flex;gap:6px">
+            <input class="form-control" id="newUnitName" placeholder="اسم الوحدة الجديدة (مثل: علبة)" style="flex:1">
+            <button class="btn btn-primary" onclick="addUnit()"><span class="material-icons-round">add</span></button>
+        </div>
+        <div id="unitsList">
+            ${units.length===0?'<div style="text-align:center;padding:20px;color:var(--text-secondary);font-size:13px">لا توجد وحدات بعد</div>':
+            units.map(u => {
+                const count = products.filter(p=>p.unit===u.name).length;
+                return `<div style="display:flex;align-items:center;gap:8px;padding:10px;border-bottom:1px solid var(--border)">
+                    <span style="flex:1;font-size:13px;font-weight:600">${u.name}</span>
+                    <span style="font-size:11px;color:var(--text-secondary)">${count} منتج</span>
+                    <button class="btn btn-sm btn-outline" onclick="editUnit('${u.id}','${u.name}')"><span class="material-icons-round">edit</span></button>
+                    <button class="btn btn-sm btn-danger" onclick="deleteUnit('${u.id}')"><span class="material-icons-round">delete</span></button>
+                </div>`;
+            }).join('')}
+        </div>
+    `);
+}
+
+function addUnit() {
+    const name = document.getElementById('newUnitName')?.value.trim();
+    if (!name) { toast('أدخل اسم الوحدة','error'); return; }
+    const units = DB.get('units');
+    if (units.find(u=>u.name===name)) { toast('الوحدة موجودة مسبقاً','error'); return; }
+    units.push({ id:uid(), name });
+    DB.set('units', units);
+    openUnitModal();
+    toast('تمت الإضافة');
+}
+
+function editUnit(id, oldName) {
+    const newName = prompt('اسم الوحدة الجديد:', oldName);
+    if (!newName || newName.trim() === '' || newName === oldName) return;
+    const units = DB.get('units');
+    if (units.find(u=>u.name===newName.trim())) { toast('الوحدة موجودة مسبقاً','error'); return; }
+    const u = units.find(x=>x.id===id);
+    if (u) {
+        const old = u.name;
+        u.name = newName.trim();
+        DB.set('units', units);
+        const products = DB.get('products');
+        products.forEach(p => { if (p.unit===old) p.unit=newName.trim(); });
+        DB.set('products', products);
+        openUnitModal(); toast('تم التعديل');
+    }
+}
+
+function deleteUnit(id) {
+    const units = DB.get('units');
+    const u = units.find(x=>x.id===id);
+    if (!u) return;
+    const count = DB.get('products').filter(p=>p.unit===u.name).length;
+    if (count > 0) { toast(`لا يمكن حذف الوحدة - يوجد ${count} منتج مرتبط بها`,'error'); return; }
+    confirmModal('هل أنت متأكد من الحذف؟', function() {
+        DB.set('units', units.filter(x=>x.id!==id));
+        openUnitModal(); toast('تم الحذف');
+    });
+}
+
 function filterProducts(q) {
     q = q.toLowerCase();
     document.querySelectorAll('#productsTableBody tr').forEach(tr => { tr.style.display = (tr.dataset.name?.toLowerCase().includes(q)||tr.dataset.barcode?.includes(q)) ? '' : 'none'; });
@@ -1292,7 +1652,10 @@ function openProductModal(id) {
     const products = DB.get('products');
     const categories = DB.get('categories');
     const warehouses = DB.get('warehouses');
+    const units = DB.get('units');
+    let unitList = units.length ? units.map(u=>u.name) : ['قطعة','علبة','كرتونة'];
     const p = id ? products.find(x=>x.id===id) : null;
+    if (p && p.unit && !unitList.includes(p.unit)) unitList = [p.unit, ...unitList];
 
     openModal(p ? 'تعديل المنتج' : 'إضافة منتج جديد', `
         <div class="form-group"><label>اسم المنتج *</label><input class="form-control" id="pName" value="${p?p.name:''}"></div>
@@ -1309,7 +1672,7 @@ function openProductModal(id) {
             <div class="form-group"><label>الحد الأدنى</label><input class="form-control" type="number" id="pMin" value="${p?p.minQuantity:5}"></div>
         </div>
         <div class="form-row">
-            <div class="form-group"><label>الوحدة</label><select class="form-control" id="pUnit"><option>قطعة</option><option>كيلو</option><option>لتر</option><option>متر</option><option>علبة</option><option>كرتون</option></select></div>
+            <div class="form-group"><label>الوحدة</label><select class="form-control" id="pUnit">${unitList.map(u=>`<option ${p&&p.unit===u?'selected':''}>${u}</option>`).join('')}${!p&&unitList.length?'<option selected>قطعة</option>':''}</select></div>
             <div class="form-group"><label>المخزن</label><select class="form-control" id="pWarehouse">${warehouses.map(w=>`<option value="${w.id}" ${(p&&p.warehouseId===w.id)||(!p&&w.isDefault)?'selected':''}>${w.name}${w.isDefault?' (افتراضي)':''}</option>`).join('')}</select></div>
         </div>
         <div class="form-group"><label>تاريخ انتهاء الصلاحية</label><input class="form-control" type="date" id="pExpiry" value="${p?p.expiryDate||'':''}"></div>
@@ -1378,6 +1741,7 @@ let purDiscountType = 'amount';
 let purPaymentMethod = 'cash';
 let purNotes = '';
 let editingPurInvoiceId = null;
+let poContext = null;
 let editingPurIsReturn = false;
 
 function renderPurchases(area) {
@@ -1390,27 +1754,54 @@ function renderPurchases(area) {
             <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;flex-wrap:wrap;gap:6px">
                 <div style="display:flex;align-items:center;gap:6px">
                     <button class="btn btn-sm btn-outline" onclick="showScreen('dashboard')"><span class="material-icons-round" style="font-size:16px">arrow_forward</span></button>
-                    <h2 style="font-size:16px;font-weight:800"><span class="material-icons-round" style="color:#8B5CF6;vertical-align:middle;font-size:18px">shopping_cart</span> المشتريات</h2>
+                    <h2 style="font-size:16px;font-weight:800"><span class="material-icons-round" style="color:#8B5CF6;vertical-align:middle;font-size:18px">shopping_cart</span> ${poContext?'طلب شراء':'المشتريات'}</h2>
                 </div>
                 <div style="display:flex;gap:4px;align-items:center">
                     <button class="btn btn-sm btn-outline" onclick="exportPurchasesCSV()"><span class="material-icons-round" style="font-size:14px">file_download</span> CSV</button>
                     <button class="btn btn-sm btn-outline" onclick="exportPurchasesPDF()"><span class="material-icons-round" style="font-size:14px">picture_as_pdf</span> PDF</button>
-                    <button class="btn btn-sm btn-primary" style="background:#8B5CF6" onclick="purMode='invoice';purCart=[];purSupplierId='';purSupplierName='';purDiscount=0;purDiscountType='amount';editingPurInvoiceId=null;editingPurIsReturn=false;renderPurchases(document.getElementById('contentArea'))"><span class="material-icons-round">add</span> جديدة</button>
+                    <button class="btn btn-sm btn-primary" style="background:#8B5CF6" onclick="purMode='invoice';purCart=[];purSupplierId='';purSupplierName='';purDiscount=0;purDiscountType='amount';editingPurInvoiceId=null;editingPurIsReturn=false;poContext=null;renderPurchases(document.getElementById('contentArea'))"><span class="material-icons-round">add</span> جديدة</button>
                 </div>
             </div>
             <div class="section-card" style="margin-bottom:12px"><div style="display:flex;justify-content:space-between;align-items:center"><span style="color:var(--text-secondary)">إجمالي المشتريات (${purchaseInvoices.length} فاتورة)</span><span style="font-size:20px;font-weight:800;color:#8B5CF6" id="purFilteredTotal">${fmt(totalPurchases)}</span></div></div>
             ${dateFilterBar('pur')}
             ${held.length>0?`<div class="section-card"><div class="section-header"><h3>فواتير معلقة (${held.length})</h3></div><div class="held-list">${held.map((h,i)=>`<div class="held-item" onclick="resumePurHeld(${i})"><div><strong>${h.supplierName||'بدون مورد'}</strong><br><small style="color:var(--text-secondary)">${h.items.length} منتج - ${fmt(h.total)}</small></div><div style="display:flex;gap:4px"><button class="btn btn-sm btn-primary" onclick="event.stopPropagation();resumePurHeld(${i})"><span class="material-icons-round" style="font-size:14px">play_arrow</span></button><button class="btn btn-sm btn-danger" onclick="event.stopPropagation();removePurHeld(${i})"><span class="material-icons-round" style="font-size:14px">delete</span></button></div></div>`).join('')}</div></div>`:''}
+            <div style="display:flex;gap:6px;margin-bottom:8px;flex-wrap:wrap">
+                <input class="form-control" id="purSearch" placeholder="بحث برقم الفاتورة أو المورد..." oninput="filterInvoiceList('pur')" style="flex:1;min-width:140px;padding:7px 10px">
+                <select class="form-control" id="purStatus" onchange="filterInvoiceList('pur')" style="min-width:110px;padding:7px 10px">
+                    <option value="all">كل الحالات</option>
+                    <option value="paid">مدفوعة</option>
+                    <option value="partial">جزئية</option>
+                    <option value="pending">آجلة</option>
+                    <option value="return">مرتجع</option>
+                </select>
+            </div>
             <div class="section-card"><div class="section-header"><h3>فواتير الشراء (${purchaseInvoices.length})</h3></div>
-                <div class="table-container"><table><thead><tr><th>رقم</th><th>المورد</th><th>الإجمالي</th><th>التاريخ</th><th>إجراءات</th></tr></thead><tbody id="purTableBody">
-                ${purchaseInvoices.length===0?'<tr><td colspan="5" style="text-align:center;padding:30px;color:var(--text-secondary)">لا توجد فواتير</td></tr>':
-                purchaseInvoices.slice(0,50).map(i => {
+                <div class="table-container"><table id="purTable"><thead><tr>
+                    <th data-sortkey="num" data-sorttype="num" style="cursor:pointer">رقم</th>
+                    <th data-sortkey="party" data-sorttype="str" style="cursor:pointer">المورد</th>
+                    <th data-sortkey="total" data-sorttype="num" style="text-align:left;cursor:pointer">الإجمالي</th>
+                    <th data-sortkey="date" data-sorttype="date" style="text-align:left;cursor:pointer">التاريخ</th>
+                    <th>إجراءات</th>
+                </tr></thead><tbody id="purTableBody">
+                ${purchaseInvoices.length===0 ? '<tr><td colspan="5" style="text-align:center;padding:30px;color:var(--text-secondary)">لا توجد فواتير</td></tr>' :
+                purchaseInvoices.map(i => {
                     const isReturn = i.isReturn;
                     const totalDisplay = isReturn ? -Math.abs(i.total) : i.total;
                     const totalColor = isReturn ? 'var(--error)' : '#8B5CF6';
-                    return `<tr data-date="${i.createdAt}" data-total="${i.total}" style="cursor:pointer" onclick="editInvoice('${i.id}')"><td><strong>${i.invoiceNumber}</strong></td><td>${i.customerName||'-'}${isReturn?'<br><span style="color:var(--error);font-size:10px;font-weight:700">مرتجع</span>':''}</td><td style="font-weight:700;color:${totalColor}">${fmt(totalDisplay)}</td><td>${fmtDate(i.createdAt)}</td><td><button class="btn btn-sm btn-danger" onclick="event.stopPropagation();deleteInvoice('${i.id}')"><span class="material-icons-round">delete</span></button></td></tr>`;
+                    const statusVal = isReturn ? 'return' : (i.status||'paid');
+                    return `<tr data-search="${(i.invoiceNumber||'')+' '+(i.customerName||'-')}" data-status="${statusVal}" data-total="${totalDisplay}" style="cursor:pointer" onclick="editInvoice('${i.id}')">
+                        <td data-sort="${i.invoiceNumber}"><strong>${i.invoiceNumber}</strong>${isReturn?' <span class="badge badge-danger" style="font-size:9px">مرتجع</span>':''}</td>
+                        <td data-sort="${i.customerName||'-'}">${i.customerName||'-'}</td>
+                        <td data-sort="${i.total}" style="font-weight:700;color:${totalColor}">${fmt(totalDisplay)}</td>
+                        <td data-sort="${i.createdAt}">${fmtDate(i.createdAt)}</td>
+                        <td style="white-space:nowrap">
+                            <button class="btn btn-xs btn-outline" onclick="event.stopPropagation();viewInvoice('${i.id}')" title="عرض"><span class="material-icons-round" style="font-size:14px">visibility</span></button>
+                            <button class="btn btn-xs btn-danger" onclick="event.stopPropagation();confirmModal('حذف الفاتورة؟', ()=>deleteInvoice('${i.id}'))" title="حذف"><span class="material-icons-round" style="font-size:14px">delete</span></button>
+                        </td>
+                    </tr>`;
                 }).join('')}
                 </tbody></table></div></div>`;
+        enableTableSort('purTable');
         return;
     }
 
@@ -1421,8 +1812,9 @@ function renderPurchases(area) {
                 <!-- Top Row: Actions -->
                 <div style="padding:8px 10px;display:flex;gap:5px;align-items:center;flex-wrap:wrap;border-bottom:1px solid var(--border-light)">
                     <div style="display:flex;gap:4px;flex:1;min-width:0">
-                        <button class="btn btn-sm btn-primary" style="background:linear-gradient(135deg,#8B5CF6,#7C3AED)" onclick="${editingPurInvoiceId?`saveEditPurchase('${editingPurInvoiceId}')`:'savePurDirect()'}"><span class="material-icons-round" style="font-size:14px">save</span> حفظ</button>
+                        <button class="btn btn-sm btn-primary" style="background:linear-gradient(135deg,#8B5CF6,#7C3AED)" onclick="${poContext?`savePOFromPurchases('${poContext}')`:(editingPurInvoiceId?`saveEditPurchase('${editingPurInvoiceId}')`:'savePurDirect()')}"><span class="material-icons-round" style="font-size:14px">save</span> حفظ${poContext?' طلب':''}</button>
                         ${editingPurInvoiceId?`<button class="btn btn-sm btn-success" onclick="saveEditPurchase('${editingPurInvoiceId}',true)"><span class="material-icons-round" style="font-size:14px">print</span> حفظ + طباعة</button>`:''}
+                        ${poContext && poContext!=='new'?`<button class="btn btn-sm btn-outline" onclick="convertToPurchase('${poContext}')"><span class="material-icons-round" style="font-size:14px">shopping_cart</span> تحويل لفاتورة شراء</button>`:''}
                         ${editingPurInvoiceId?`<button class="btn btn-sm btn-outline" onclick="printPurchaseInvoiceById('${editingPurInvoiceId}')"><span class="material-icons-round" style="font-size:14px">print</span></button>`:`<button class="btn btn-sm btn-outline" onclick="printCurrentPurCart()"><span class="material-icons-round" style="font-size:14px">print</span></button>`}
                         ${editingPurInvoiceId?`<label class="return-checkbox" style="display:flex;align-items:center;gap:4px;font-size:10px;cursor:pointer;padding:4px 8px;border-radius:var(--radius-sm);border:1.5px solid ${editingPurIsReturn?'var(--error)':'var(--border)'};background:${editingPurIsReturn?'rgba(239,68,68,0.08)':'var(--surface)'};color:${editingPurIsReturn?'var(--error)':'var(--text-secondary)'};transition:var(--transition)"><input type="checkbox" ${editingPurIsReturn?'checked':''} onchange="editingPurIsReturn=this.checked;renderPurchases(document.getElementById('contentArea'))" style="display:none"><span class="material-icons-round" style="font-size:15px">${editingPurIsReturn?'check_box':'check_box_outline_blank'}</span> مرتجع</label>`:''}
                     </div>
@@ -1432,7 +1824,7 @@ function renderPurchases(area) {
                             <option value="credit" ${purPaymentMethod==='credit'?'selected':''}>📋 آجل</option>
                         </select>
                         <button class="btn btn-sm btn-outline" onclick="holdPurchase()" title="تعليق الفاتورة" style="padding:4px 8px"><span class="material-icons-round" style="font-size:15px">pause_circle</span></button>
-                        <button class="btn btn-sm btn-outline" onclick="purMode='list';editingPurInvoiceId=null;editingPurIsReturn=false;renderPurchases(document.getElementById('contentArea'))" title="العودة للقائمة" style="padding:4px 8px"><span class="material-icons-round" style="font-size:15px">arrow_forward</span> الفواتير</button>
+                        <button class="btn btn-sm btn-outline" onclick="if(poContext){poContext=null;showScreen('purchaseOrders');return;} purMode='list';editingPurInvoiceId=null;editingPurIsReturn=false;renderPurchases(document.getElementById('contentArea'))" title="العودة للقائمة" style="padding:4px 8px"><span class="material-icons-round" style="font-size:15px">arrow_forward</span> ${poContext?'طلبات الشراء':'الفواتير'}</button>
                     </div>
                 </div>
                 <!-- Second Row: Supplier + Notes -->
@@ -1450,9 +1842,12 @@ function renderPurchases(area) {
                     </div>
                 </div>
                 <!-- Third Row: Product Search -->
-                <div style="padding:0 10px 8px;position:relative">
-                    <input class="form-control" placeholder="🔍 ابحث عن صنف أو امسح باركود..." id="purSearch" oninput="searchPurProducts(this.value)" onfocus="searchPurProducts(this.value)" autocomplete="off" style="padding:6px 10px;font-size:12px;border-radius:var(--radius-sm)">
-                    <div id="purProductsDropdown" style="display:none;position:absolute;top:100%;right:10px;left:10px;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-sm);max-height:200px;overflow-y:auto;z-index:50;box-shadow:var(--shadow-lg);margin-top:2px"></div>
+                <div style="padding:0 10px 8px;position:relative;display:flex;gap:6px;align-items:center">
+                    <button onclick="openBarcodeScanner('pur')" style="flex-shrink:0;width:36px;height:36px;border-radius:var(--radius-sm);border:1px solid var(--border);background:var(--surface);color:#8B5CF6;display:flex;align-items:center;justify-content:center;cursor:pointer" title="مسح بالكاميرا"><span class="material-icons-round" style="font-size:20px">qr_code_scanner</span></button>
+                    <div style="flex:1;position:relative">
+                        <input class="form-control" placeholder="🔍 ابحث عن صنف أو امسح باركود..." id="purSearch" oninput="searchPurProducts(this.value)" onfocus="searchPurProducts(this.value)" autocomplete="off" style="padding:6px 10px;font-size:12px;border-radius:var(--radius-sm)">
+                        <div id="purProductsDropdown" style="display:none;position:absolute;top:100%;right:0;left:0;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-sm);max-height:200px;overflow-y:auto;z-index:50;box-shadow:var(--shadow-lg);margin-top:2px"></div>
+                    </div>
                 </div>
             </div>
 
@@ -1471,9 +1866,13 @@ function renderPurchases(area) {
                         <label style="font-size:10px;font-weight:600;color:var(--text-secondary);display:block;margin-bottom:3px">الخصم</label>
                         <input class="form-control" type="number" id="purDiscountInput" value="${purDiscount||''}" onchange="updatePurDiscountInput(this.value)" style="padding:6px 10px;font-size:12px;border-radius:var(--radius-sm)">
                     </div>
+                    <div style="margin-bottom:8px">
+                        <label style="font-size:10px;font-weight:600;color:var(--text-secondary);display:block;margin-bottom:3px">الضريبة (رقم)</label>
+                        <input class="form-control" type="number" id="purTaxInput" value="${curTax||''}" onchange="updatePurTaxInput(this.value)" style="padding:6px 10px;font-size:12px;border-radius:var(--radius-sm)">
+                    </div>
                     <div style="display:flex;justify-content:space-between;margin-bottom:4px;font-size:11px"><span style="color:var(--text-muted)">المجموع الفرعي</span><span id="purSubtotal" style="font-weight:600">0.00 ج.م</span></div>
                     <div style="display:flex;justify-content:space-between;margin-bottom:4px;font-size:11px"><span style="color:var(--text-muted)">الخصم</span><span style="color:var(--error);font-weight:600" id="purDiscountDisplay">0.00 ج.م</span></div>
-                    <div style="display:flex;justify-content:space-between;margin-bottom:4px;font-size:11px"><span style="color:var(--text-muted)">الضريبة (${getTaxRate()}%)</span><span id="purTax" style="font-weight:600">0.00 ج.م</span></div>
+                    <div style="display:flex;justify-content:space-between;margin-bottom:4px;font-size:11px"><span style="color:var(--text-muted)">الضريبة</span><span id="purTax" style="font-weight:600">0.00 ج.م</span></div>
                     <div id="purCreditFields" style="display:none;border-top:1px solid var(--border-light);padding-top:6px;margin-top:4px">
                         <div class="form-group" style="margin-bottom:4px"><label style="font-size:10px;font-weight:600">المبلغ المدفوع</label><input class="form-control" type="number" id="purPaidInput" value="0" onchange="updatePurCredit()" oninput="updatePurCredit()" style="padding:5px 8px;font-size:12px;border-radius:var(--radius-sm)"></div>
                         <div style="display:flex;justify-content:space-between;font-size:12px;padding:4px 0"><span style="color:var(--text-muted);font-weight:600">المتبقي</span><span id="purRemaining" style="color:var(--error);font-weight:800;font-size:13px">0.00 ج.م</span></div>
@@ -1497,7 +1896,7 @@ function renderPurchases(area) {
                 </div>
             </div>
         </div>`;
-    setTimeout(() => document.getElementById('purSearch')?.focus(), 100);
+    setTimeout(() => { document.getElementById('purSearch')?.focus(); updatePurCart(); }, 100);
 }
 
 function searchPurSupplier(q) {
@@ -1556,6 +1955,7 @@ function togglePurDetails() {
 }
 
 function updatePurDiscountInput(val) { purDiscount = parseFloat(val)||0; updatePurCart(); }
+function updatePurTaxInput(val) { curTax = parseFloat(val)||0; updatePurCart(); }
 
 function addToPurCart(productId) {
     const products = DB.get('products');
@@ -1563,14 +1963,14 @@ function addToPurCart(productId) {
     if (!product) return;
     const existing = purCart.find(c=>c.productId===productId);
     if (existing) existing.quantity++;
-    else purCart.push({ productId:product.id, productName:product.name, unitPrice:product.buyingPrice, quantity:1, discount:0, taxRate:getTaxRate() });
+    else purCart.push({ productId:product.id, productName:product.name, unitPrice:product.buyingPrice, quantity:1, discount:0, taxRate:getTaxRate(), buy: product.buyingPrice||0 });
     updatePurCart();
 }
 
 function removeFromPurCart(idx) { purCart.splice(idx,1); updatePurCart(); }
 function updatePurCartQty(idx, change) { purCart[idx].quantity+=change; if(purCart[idx].quantity<=0) purCart.splice(idx,1); updatePurCart(); }
 function updatePurCartItemDiscount(idx, val) { purCart[idx].discount = parseFloat(val)||0; updatePurCart(); }
-function clearPurCart() { purCart=[]; purSupplierId=''; purSupplierName=''; purDiscount=0; purDiscountType='amount'; purPaymentMethod='cash'; const inp=document.getElementById('purSupplierInput'); if(inp) inp.value=''; updatePurCart(); }
+function clearPurCart() { purCart=[]; purSupplierId=''; purSupplierName=''; purDiscount=0; curTax=0; purDiscountType='amount'; purPaymentMethod='cash'; const inp=document.getElementById('purSupplierInput'); if(inp) inp.value=''; updatePurCart(); }
 
 function updatePurCart() {
     const el = document.getElementById('purCartItems');
@@ -1603,7 +2003,7 @@ function updatePurCart() {
     if (purDiscountType==='percent') invDiscount = (subtotal-itemDiscounts) * purDiscount / 100;
     else invDiscount = purDiscount;
     const taxable = subtotal - itemDiscounts - invDiscount;
-    const tax = taxable * taxRate / 100;
+    const tax = curTax || 0;
     const total = taxable + tax;
 
     const countEl = document.getElementById('purCartCount');
@@ -1622,15 +2022,14 @@ function updatePurCart() {
 function holdPurchase() {
     if (purCart.length===0) { toast('السلة فارغة','error'); return; }
     const held = DB.getOne('heldPurchases')||[];
-    const taxRate = getTaxRate();
     const subtotal = purCart.reduce((s,i) => s+i.unitPrice*i.quantity, 0);
     const itemDiscounts = purCart.reduce((s,i) => s+(i.discount||0), 0);
     let invDiscount = purDiscountType==='percent'?(subtotal-itemDiscounts)*purDiscount/100:purDiscount;
     const taxable = subtotal - itemDiscounts - invDiscount;
-    const total = taxable * (1+taxRate/100);
-    held.push({ items:[...purCart], supplierId:purSupplierId, supplierName:purSupplierName, discount:purDiscount, discountType:purDiscountType, total, createdAt:new Date().toISOString() });
+    const total = taxable + (curTax||0);
+    held.push({ items:[...purCart], supplierId:purSupplierId, supplierName:purSupplierName, discount:purDiscount, discountType:purDiscountType, tax:curTax||0, total, createdAt:new Date().toISOString() });
     DB.setOne('heldPurchases', held);
-    purCart=[]; purSupplierId=''; purSupplierName=''; purDiscount=0; purDiscountType='amount';
+    purCart=[]; purSupplierId=''; purSupplierName=''; purDiscount=0; curTax=0; purDiscountType='amount';
     toast('تم تعليق فاتورة الشراء');
     renderPurchases(document.getElementById('contentArea'));
 }
@@ -1638,7 +2037,7 @@ function holdPurchase() {
 function resumePurHeld(idx) {
     const held = DB.getOne('heldPurchases')||[];
     const h = held[idx]; if (!h) return;
-    purCart=[...h.items]; purSupplierId=h.supplierId||''; purSupplierName=h.supplierName||''; purDiscount=h.discount||0; purDiscountType=h.discountType||'amount';
+    purCart=[...h.items]; purSupplierId=h.supplierId||''; purSupplierName=h.supplierName||''; purDiscount=h.discount||0; purDiscountType=h.discountType||'amount'; curTax = h.tax||0;
     held.splice(idx,1); DB.setOne('heldPurchases', held);
     purMode='invoice'; purPaymentMethod='cash'; renderPurchases(document.getElementById('contentArea'));
 }
@@ -1657,7 +2056,7 @@ function updatePurCredit() {
     const itemDiscounts = purCart.reduce((s,i) => s+(i.discount||0),0);
     let invDiscount = purDiscountType==='percent'?(subtotal-itemDiscounts)*purDiscount/100:purDiscount;
     const taxable = subtotal - itemDiscounts - invDiscount;
-    const tax = taxable * taxRate / 100;
+    const tax = curTax || 0;
     const total = taxable + tax;
     const paid = parseFloat(document.getElementById('purPaidInput')?.value)||0;
     const remaining = total - paid;
@@ -1672,7 +2071,7 @@ function savePurDirect() {
     const itemDiscounts = purCart.reduce((s,i) => s+(i.discount||0),0);
     let invDiscount = purDiscountType==='percent'?(subtotal-itemDiscounts)*purDiscount/100:purDiscount;
     const taxable = subtotal - itemDiscounts - invDiscount;
-    const tax = taxable * taxRate / 100;
+    const tax = curTax || 0;
     const total = taxable + tax;
     const method = purPaymentMethod;
     let paidAmount = 0;
@@ -1718,7 +2117,7 @@ function savePurDirect() {
             <p style="margin-top:8px;font-size:14px">فاتورة شراء رقم <strong>${invoice.invoiceNumber}</strong></p>
             <p style="font-size:12px;color:var(--text-secondary)">${fmt(invoice.total)}</p>
         </div>
-    `, `<button class="btn btn-primary" onclick="printPurchaseReceipt(window._lastPurInvoice);closeModal()"><span class="material-icons-round">print</span> طباعة إيصال</button><button class="btn btn-outline" onclick="closeModal()">إغلاق</button>`);
+        `, `<button class="btn btn-primary" onclick="confirmPrint('${invoice.id}');closeModal()"><span class="material-icons-round">print</span> طباعة إيصال</button><button class="btn btn-success" onclick="shareInvoiceWhatsapp('${invoice.id}');closeModal()"><span class="material-icons-round">share</span> واتساب</button><button class="btn btn-outline" onclick="closeModal()">إغلاق</button>`);
     setTimeout(()=>renderPurchases(document.getElementById('contentArea')),100);
 }
 
@@ -1739,7 +2138,7 @@ function saveEditPurchase(id, printAfter) {
     const itemDiscounts = purCart.reduce((s,i) => s+(i.discount||0),0);
     let invDiscount = purDiscountType==='percent'?(subtotal-itemDiscounts)*purDiscount/100:purDiscount;
     const taxable = subtotal - itemDiscounts - invDiscount;
-    const tax = taxable * taxRate / 100;
+    const tax = curTax || 0;
     const total = taxable + tax;
     const method = purPaymentMethod;
     let paidAmount = method==='cash' ? total : parseFloat(document.getElementById('purPaidInput')?.value)||0;
@@ -1753,6 +2152,7 @@ function saveEditPurchase(id, printAfter) {
     oldInv.taxAmount = tax;
     oldInv.total = total;
     oldInv.paidAmount = paidAmount;
+    const oldRemainingAmt = oldInv.remainingAmount || 0;
     oldInv.remainingAmount = remaining;
     oldInv.paymentMethod = method==='cash'?'نقدي':'آجل';
     oldInv.status = status;
@@ -1762,9 +2162,9 @@ function saveEditPurchase(id, printAfter) {
     oldInv.isReturn = editingPurIsReturn;
 
     if (editingPurIsReturn) {
-        purCart.forEach(item => { const p = products.find(x => x.id===item.productId); if (p) p.quantity = Math.max(0, p.quantity - item.quantity); });
-    } else {
         purCart.forEach(item => { const p = products.find(x => x.id===item.productId); if (p) p.quantity += item.quantity; });
+    } else {
+        purCart.forEach(item => { const p = products.find(x => x.id===item.productId); if (p) p.quantity = Math.max(0, p.quantity - item.quantity); });
     }
     DB.set('products', products);
 
@@ -1772,8 +2172,7 @@ function saveEditPurchase(id, printAfter) {
         const suppliers = DB.get('suppliers');
         const s = suppliers.find(x => x.id===purSupplierId);
         if (s) {
-            const oldRemaining = oldInv.remainingAmount || 0;
-            s.balance = (s.balance||0) + oldRemaining - remaining;
+            s.balance = (s.balance||0) + oldRemainingAmt - remaining;
             DB.set('suppliers', suppliers);
         }
     }
@@ -1790,60 +2189,72 @@ function saveEditPurchase(id, printAfter) {
                 <p style="margin-top:8px;font-size:14px">فاتورة شراء رقم <strong>${oldInv.invoiceNumber}</strong></p>
                 <p style="font-size:12px;color:var(--text-secondary)">${fmt(oldInv.total)}</p>
             </div>
-        `, `<button class="btn btn-primary" onclick="printPurchaseReceipt(window._lastPurInvoice);closeModal()"><span class="material-icons-round">print</span> طباعة إيصال</button><button class="btn btn-outline" onclick="closeModal()">إغلاق</button>`);
+    `, `<button class="btn btn-primary" onclick="printPurchaseInvoiceById('${oldInv.id}');closeModal()"><span class="material-icons-round">print</span> طباعة</button><button class="btn btn-success" onclick="shareInvoiceWhatsapp('${oldInv.id}');closeModal()"><span class="material-icons-round">share</span> واتساب</button><button class="btn btn-outline" onclick="closeModal()">إغلاق</button>`);
     }
     setTimeout(()=>renderPurchases(document.getElementById('contentArea')),100);
 }
 
 function printCurrentPurCart() {
-    if (!purCart.length) { showToast('السلة فارغة', 'error'); return; }
+    if (!purCart.length) { toast('السلة فارغة', 'error'); return; }
     const s = DB.getOne('settings') || {};
     const subtotal = purCart.reduce((sum, item) => sum + item.unitPrice * item.quantity, 0);
     const itemDiscounts = purCart.reduce((sum, item) => sum + (item.discount || 0), 0);
     const invDiscount = purDiscountType === 'percent' ? (subtotal - itemDiscounts) * purDiscount / 100 : purDiscount;
     const taxable = subtotal - itemDiscounts - invDiscount;
-    const taxRate = getTaxRate();
-    const tax = s.enableTax !== false ? taxable * taxRate / 100 : 0;
+    const tax = curTax || 0;
     const total = taxable + tax;
-    const itemsHtml = purCart.map(item => {
-        const lineTotal = item.unitPrice * item.quantity - (item.discount || 0);
-        return `<div class="item-line"><span>${item.name} × ${item.quantity}${item.discount ? ' (-' + Number(item.discount).toFixed(2) + ')' : ''}</span><span>${Number(lineTotal).toFixed(2)} ${s.currency || 'ج.م'}</span></div>`;
-    }).join('');
-    const html = `<!DOCTYPE html><html lang="ar" dir="rtl"><head><meta charset="UTF-8"><title>فاتورة مشتريات</title><style>@page{size:80mm auto;margin:0}body{font-family:'Courier New',monospace;width:80mm;margin:0 auto;padding:5mm;font-size:12px}h2{text-align:center;margin:0 0 5px;font-size:16px}.receipt{width:100%}.item-line{display:flex;justify-content:space-between;font-size:11px;margin:2px 0}.total-line{display:flex;justify-content:space-between;font-size:14px;font-weight:bold;margin-top:8px;border-top:2px solid #000;padding-top:8px}hr{border:none;border-top:1px dashed #000;margin:10px 0}.footer{text-align:center;font-size:10px;color:#666;margin-top:10px}</style></head><body><div class="receipt"><h2>${s.storeName || 'فاتورة مشتريات'}</h2><hr>${itemsHtml}<hr><div class="total-line"><span>الإجمالي</span><span>${Number(total).toFixed(2)} ${s.currency || 'ج.م'}</span></div><div class="footer"><p>شكراً لشرائكم</p></div></div><script>window.onload=function(){window.print();}<\/script></body></html>`;
-    const w = window.open('', '_blank', 'width=400,height=600');
-    w.document.write(html); w.document.close();
+    const inv = {
+        invoiceNumber: 'مسودة', createdAt: new Date().toISOString(), customerName: purSupplierName || '-',
+        items: purCart.map(item => ({ productName: item.name, quantity: item.quantity, unitPrice: item.unitPrice, discount: item.discount || 0 })),
+        subtotal: taxable, discount: invDiscount, taxAmount: tax, total, paidAmount: 0, remainingAmount: total
+    };
+    printPurchaseReceipt(inv);
 }
 
 function printPurchaseReceipt(inv) {
     if (!inv) return;
     const s = DB.getOne('settings') || {};
+    if (s.bluetoothThermal) {
+        if (!btChar) { toast('الطابعة الحرارية غير متصلة — فعّل الاتصال من الإعدادات', 'error'); return; }
+        printThermalReceipt(inv, 'purchase'); return;
+    }
+    openPurchaseWindow(inv);
+}
+function openPurchaseWindow(inv) {
+    if (!inv) return;
+    const s = DB.getOne('settings') || {};
+    const logoHtml = s.storeLogo ? `<img src="${s.storeLogo}" style="width:60px;height:60px;object-fit:contain;margin-bottom:4px;border-radius:8px">` : `<div style="width:50px;height:50px;margin:0 auto 4px;border-radius:50%;background:linear-gradient(135deg,#8B5CF6,#7C3AED);display:flex;align-items:center;justify-content:center"><span style="font-size:20px;color:white;font-weight:800">${(s.storeName||s.companyName||'م')[0]}</span></div>`;
     const itemsHtml = inv.items.map(item => {
         const lineTotal = item.unitPrice * item.quantity - (item.discount||0);
-        const discText = item.discount > 0 ? ` <span style="color:red;font-size:10px">-${fmt(item.discount)}</span>` : '';
-        return `<div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:2px"><span>${item.productName} x${item.quantity}${discText}</span><span>${fmt(lineTotal)}</span></div>`;
+        const discText = item.discount > 0 ? `\n  <span style="color:#EF4444;font-size:10px">خصم: -${fmt(item.discount)}</span>` : '';
+        return `<div style="display:flex;justify-content:space-between;font-size:11px;margin-bottom:3px;border-bottom:1px dotted #eee;padding-bottom:3px"><div style="flex:1"><div style="font-weight:600">${item.productName}</div><div style="font-size:10px;color:#666">${item.quantity} × ${fmt(item.unitPrice)}${discText}</div></div><div style="font-weight:700">${fmt(lineTotal)}</div></div>`;
     }).join('');
     const receiptHtml = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>إيصال شراء</title><style>
-        body{font-family:'Courier New',monospace;text-align:center;padding:10px;max-width:300px;margin:0 auto;font-size:12px}
-        .line{border-top:1px dashed #000;margin:8px 0}
-        .total{font-size:16px;font-weight:bold;border-top:2px solid #000;margin-top:8px;padding-top:8px}
+        @page{size:80mm auto;margin:0}
+        body{font-family:'Cairo','Courier New',monospace;text-align:center;padding:8px 6px;max-width:302px;margin:0 auto;font-size:12px;color:#1a1a1a}
+        .line{border-top:1px dashed #ccc;margin:6px 0}
+        .total{font-size:15px;font-weight:bold;border-top:2px solid #000;margin-top:6px;padding-top:6px}
+        .footer{margin-top:8px;font-size:10px;color:#888;border-top:1px dashed #ccc;padding-top:6px}
     </style></head><body>
-        <h2 style="font-size:16px;margin:0">${s.companyName||s.storeName||''}</h2>
-        <p style="margin:2px 0;font-size:11px">${s.storePhone||''} ${s.storeAddress?'| '+s.storeAddress:''}</p>
+        ${logoHtml}
+        <h2 style="font-size:15px;margin:0;font-weight:800">${s.storeName||s.companyName||''}</h2>
+        <p style="margin:2px 0;font-size:10px;color:#666">فاتورة شراء</p>
         <div class="line"></div>
-        <div style="text-align:right"><strong>فاتورة شراء رقم:</strong> ${inv.invoiceNumber}</div>
-        <div style="text-align:right;font-size:11px">التاريخ: ${fmtDateTime(inv.createdAt)}</div>
-        <div style="text-align:right;font-size:11px">المورد: ${inv.customerName||'-'}</div>
+        <div style="display:flex;justify-content:space-between;font-size:11px"><div style="text-align:right"><strong>شراء #${inv.invoiceNumber}</strong></div><div>${fmtDate(inv.createdAt)}</div></div>
+        <div style="text-align:right;font-size:11px;color:#666;margin-top:2px">المورد: ${inv.customerName||'-'}</div>
         <div class="line"></div>
         ${itemsHtml}
         <div class="line"></div>
-        ${inv.discount>0?`<div style="display:flex;justify-content:space-between;font-size:12px"><span>الخصم</span><span style="color:red">-${fmt(inv.discount)}</span></div>`:''}
-        ${inv.taxAmount>0?`<div style="display:flex;justify-content:space-between;font-size:12px"><span>الضريبة</span><span>${fmt(inv.taxAmount)}</span></div>`:''}
+        ${inv.discount>0?`<div style="display:flex;justify-content:space-between;font-size:11px"><span>الخصم</span><span style="color:#EF4444">-${fmt(inv.discount)}</span></div>`:''}
+        ${inv.taxAmount>0?`<div style="display:flex;justify-content:space-between;font-size:11px"><span>الضريبة</span><span>${fmt(inv.taxAmount)}</span></div>`:''}
         <div class="total" style="display:flex;justify-content:space-between"><span>الإجمالي</span><span>${fmt(inv.total)}</span></div>
-        <div style="display:flex;justify-content:space-between;font-size:12px;margin-top:4px"><span>المدفوع</span><span>${fmt(inv.paidAmount)}</span></div>
-        ${inv.remainingAmount>0?`<div style="display:flex;justify-content:space-between;font-size:12px;color:red"><span>المتبقي</span><span>${fmt(inv.remainingAmount)}</span></div>`:''}
-        <div class="line"></div>
-        <p style="font-size:11px;margin:4px 0">شكراً لزيارتكم</p>
-        <script>window.onload=function(){window.print();window.close()}<\/script>
+        <div style="display:flex;justify-content:space-between;font-size:11px;margin-top:3px"><span>المدفوع</span><span style="font-weight:600">${fmt(inv.paidAmount)}</span></div>
+        ${inv.remainingAmount>0?`<div style="display:flex;justify-content:space-between;font-size:11px;color:#EF4444"><span>المتبقي</span><span style="font-weight:700">${fmt(inv.remainingAmount)}</span></div>`:''}
+        <div class="footer">
+            <p style="margin:0">${s.storeName||''}</p>
+            <p style="margin:2px 0 0;font-size:9px">${fmtDateTime(inv.createdAt)}</p>
+        </div>
+        <script>window.onload=function(){window.print();setTimeout(()=>window.close(),500)}<\/script>
     </body></html>`;
     const w = window.open('','_blank');
     w.document.write(receiptHtml);
@@ -1877,6 +2288,7 @@ function renderCustomers(area) {
                     </div>
                 </div>
                 <div style="display:flex;gap:4px;flex-shrink:0">
+                    <button class="btn btn-sm btn-outline" onclick="showCustomerStatement('${c.id}')" title="كشف حساب"><span class="material-icons-round" style="font-size:14px">receipt_long</span></button>
                     <button class="btn btn-sm btn-outline" onclick="openCustomerModal('${c.id}')"><span class="material-icons-round">edit</span></button>
                     <button class="btn btn-sm btn-danger" onclick="deleteCustomer('${c.id}')"><span class="material-icons-round">delete</span></button>
                 </div>
@@ -1913,6 +2325,98 @@ function deleteCustomer(id) {
     });
 }
 
+function showCustomerStatement(custId) {
+    const customers = DB.get('customers');
+    const c = customers.find(x=>x.id===custId);
+    if (!c) return;
+    const invoices = DB.get('invoices').filter(i => i.type==='sale' && i.customerId===custId);
+    invoices.sort((a,b) => new Date(a.createdAt)-new Date(b.createdAt));
+
+    let runningBalance = 0;
+    const rows = [];
+    invoices.forEach(inv => {
+        const amount = inv.isReturn ? -Math.abs(inv.total) : inv.total;
+        const paid = inv.paidAmount || 0;
+        runningBalance += amount - paid;
+        rows.push({ date:inv.createdAt, type:inv.isReturn?'مرتجع':'فاتورة مبيعات', number:inv.invoiceNumber, amount, paid, remaining:inv.remainingAmount||0, balance:runningBalance });
+    });
+
+    const totalInvoices = invoices.filter(i=>!i.isReturn).reduce((s,i)=>s+i.total,0);
+    const totalReturns = invoices.filter(i=>i.isReturn).reduce((s,i)=>s+Math.abs(i.total),0);
+    const totalPaid = invoices.reduce((s,i)=>s+(i.paidAmount||0),0);
+
+        const tableRows = rows.map(r => `<tr><td data-sort="${r.date}">${fmtDate(r.date)}</td><td data-sort="${r.type}">${r.type}</td><td data-sort="${r.number}">#${r.number}</td><td style="font-weight:700;color:${r.amount<0?'var(--error)':'var(--primary)'}" data-sort="${r.amount}">${fmt(r.amount)}</td><td style="color:var(--success)" data-sort="${r.paid}">${fmt(r.paid)}</td><td style="color:var(--error);font-weight:700" data-sort="${r.remaining}">${fmt(r.remaining)}</td></tr>`).join('');
+
+    const area = document.getElementById('contentArea');
+    area.innerHTML = `
+        <div style="display:flex;align-items:center;gap:6px;margin-bottom:10px">
+            <button class="btn btn-sm btn-outline" onclick="renderCustomers(document.getElementById('contentArea'))"><span class="material-icons-round" style="font-size:16px">arrow_forward</span></button>
+            <h2 style="font-size:16px;font-weight:800">كشف حساب العميل</h2>
+        </div>
+        <div class="section-card" style="margin-bottom:12px">
+            <div style="display:flex;align-items:center;gap:12px">
+                <div class="user-avatar" style="width:48px;height:48px;font-size:16px;flex-shrink:0">${c.name.charAt(0)}</div>
+                <div style="flex:1">
+                    <div style="font-weight:800;font-size:15px">${c.name}</div>
+                    <div style="font-size:12px;color:var(--text-secondary)">${c.phone||''} ${c.email?' · '+c.email:''}</div>
+                </div>
+                <div style="text-align:left">
+                    <div style="font-size:11px;color:var(--text-secondary)">الرصيد الحالي</div>
+                    <div style="font-weight:800;font-size:18px;color:${c.balance>0?'var(--error)':'var(--success)'}">${fmt(c.balance)}</div>
+                </div>
+            </div>
+        </div>
+        <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:12px">
+            <div class="stat-card"><div class="label">إجمالي الفواتير</div><div class="value">${fmt(totalInvoices)}</div></div>
+            <div class="stat-card"><div class="label">المرتجعات</div><div class="value" style="color:var(--error)">${fmt(totalReturns)}</div></div>
+            <div class="stat-card"><div class="label">المدفوعات</div><div class="value" style="color:var(--success)">${fmt(totalPaid)}</div></div>
+        </div>
+        <div class="section-card">
+            <div class="section-header"><h3>تفاصيل الفواتير والمدفوعات</h3><button class="btn btn-sm btn-outline" onclick="printCustomerStatement('${custId}')"><span class="material-icons-round" style="font-size:14px">print</span> طباعة</button></div>
+            <div class="table-container"><table><thead><tr><th>التاريخ</th><th>النوع</th><th>رقم</th><th>المبلغ</th><th>المدفوع</th><th>المتبقي</th></tr></thead><tbody>
+            ${rows.length===0?'<tr><td colspan="6" style="text-align:center;padding:24px;color:var(--text-secondary)">لا توجد فواتير</td></tr>':tableRows}
+            </tbody></table></div>
+        </div>`;
+}
+
+function printCustomerStatement(custId) {
+    const customers = DB.get('customers');
+    const c = customers.find(x=>x.id===custId);
+    if (!c) return;
+    const s = DB.getOne('settings') || {};
+    const invoices = DB.get('invoices').filter(i => i.type==='sale' && i.customerId===custId);
+    invoices.sort((a,b) => new Date(a.createdAt)-new Date(b.createdAt));
+    const logoHtml = s.storeLogo ? `<img src="${s.storeLogo}" style="width:50px;height:50px;object-fit:contain;margin-bottom:4px;border-radius:8px">` : '';
+
+    let runningBalance = 0;
+    const tableRows = invoices.map(inv => {
+        const amount = inv.isReturn ? -Math.abs(inv.total) : inv.total;
+        const paid = inv.paidAmount || 0;
+        runningBalance += amount - paid;
+        return `<tr style="font-size:11px;border-bottom:1px solid #eee"><td style="padding:4px">${fmtDate(inv.createdAt)}</td><td style="padding:4px">${inv.isReturn?'مرتجع':'فاتورة'}</td><td style="padding:4px">#${inv.invoiceNumber}</td><td style="padding:4px;text-align:left;font-weight:600">${fmt(amount)}</td><td style="padding:4px;text-align:left;color:green">${fmt(paid)}</td><td style="padding:4px;text-align:left;color:red;font-weight:700">${fmt(runningBalance)}</td></tr>`;
+    }).join('');
+
+    const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>كشف حساب ${c.name}</title><style>
+        @page{size:A4;margin:15mm}body{font-family:'Cairo',Arial,sans-serif;font-size:11px;color:#1a1a1a;margin:0;padding:15mm}
+        .header{text-align:center;margin-bottom:15px;border-bottom:2px solid #000;padding-bottom:10px}
+        table{width:100%;border-collapse:collapse}th{background:#f0f0f0;padding:6px;text-align:right;font-size:10px;border-bottom:2px solid #000}
+        td{padding:4px;text-align:right;font-size:11px}.summary{display:flex;justify-content:space-around;margin-top:15px;padding:10px;background:#f9f9f9;border-radius:8px}
+        .summary-item{text-align:center}.summary-item .label{font-size:10px;color:#666}.summary-item .value{font-size:16px;font-weight:800}
+    </style></head><body>
+        <div class="header">${logoHtml}<h2 style="margin:5px 0">${s.storeName||s.companyName||''}</h2><p style="margin:0;color:#666">كشف حساب العميل: ${c.name}</p><p style="margin:2px 0;color:#888;font-size:10px">تاريخ الطباعة: ${fmtDateTime(new Date().toISOString())}</p></div>
+        <div class="summary">
+            <div class="summary-item"><div class="label">إجمالي الفواتير</div><div class="value">${fmt(invoices.filter(i=>!i.isReturn).reduce((s,i)=>s+i.total,0))}</div></div>
+            <div class="summary-item"><div class="label">المرتجعات</div><div class="value" style="color:red">${fmt(invoices.filter(i=>i.isReturn).reduce((s,i)=>s+Math.abs(i.total),0))}</div></div>
+            <div class="summary-item"><div class="label">المدفوعات</div><div class="value" style="color:green">${fmt(invoices.reduce((s,i)=>s+(i.paidAmount||0),0))}</div></div>
+            <div class="summary-item"><div class="label">الرصيد</div><div class="value" style="color:${c.balance>0?'red':'green'}">${fmt(c.balance)}</div></div>
+        </div>
+        <table><thead><tr><th>التاريخ</th><th>النوع</th><th>رقم</th><th style="text-align:left">المبلغ</th><th style="text-align:left">المدفوع</th><th style="text-align:left">المتبقي</th></tr></thead><tbody>${tableRows}</tbody></table>
+        <script>window.onload=function(){window.print();setTimeout(()=>window.close(),500)}<\/script>
+    </body></html>`;
+    const w = window.open('','_blank');
+    w.document.write(html); w.document.close();
+}
+
 // ==================== SUPPLIERS ====================
 function renderSuppliers(area) {
     const suppliers = DB.get('suppliers');
@@ -1936,6 +2440,7 @@ function renderSuppliers(area) {
                     ${s.balance!==0?`<div style="margin-top:4px"><span class="badge ${s.balance>0?'badge-danger':'badge-success'}">الرصيد: ${fmt(s.balance)}</span></div>`:''}
                 </div>
                 <div style="display:flex;gap:4px;flex-shrink:0">
+                    <button class="btn btn-sm btn-outline" onclick="showSupplierStatement('${s.id}')" title="كشف حساب"><span class="material-icons-round" style="font-size:14px">receipt_long</span></button>
                     <button class="btn btn-sm btn-outline" onclick="openSupplierModal('${s.id}')"><span class="material-icons-round">edit</span></button>
                     <button class="btn btn-sm btn-danger" onclick="deleteSupplier('${s.id}')"><span class="material-icons-round">delete</span></button>
                 </div>
@@ -1969,6 +2474,99 @@ function deleteSupplier(id) {
         DB.set('suppliers', DB.get('suppliers').filter(s=>s.id!==id)); toast('تم الحذف');
         renderSuppliers(document.getElementById('contentArea'));
     });
+}
+
+function showSupplierStatement(supId) {
+    const suppliers = DB.get('suppliers');
+    const s = suppliers.find(x=>x.id===supId);
+    if (!s) return;
+    const invoices = DB.get('invoices').filter(i => i.type==='purchase' && i.customerId===supId);
+    invoices.sort((a,b) => new Date(a.createdAt)-new Date(b.createdAt));
+
+    let runningBalance = 0;
+    const rows = [];
+    invoices.forEach(inv => {
+        const amount = inv.isReturn ? -Math.abs(inv.total) : inv.total;
+        const paid = inv.paidAmount || 0;
+        runningBalance += amount - paid;
+        rows.push({ date:inv.createdAt, type:inv.isReturn?'مرتجع':'فاتورة شراء', number:inv.invoiceNumber, amount, paid, remaining:inv.remainingAmount||0, balance:runningBalance });
+    });
+
+    const totalInvoices = invoices.filter(i=>!i.isReturn).reduce((s,i)=>s+i.total,0);
+    const totalReturns = invoices.filter(i=>i.isReturn).reduce((s,i)=>s+Math.abs(i.total),0);
+    const totalPaid = invoices.reduce((s,i)=>s+(i.paidAmount||0),0);
+
+    const tableRows = rows.map(r => `<tr><td>${fmtDate(r.date)}</td><td>${r.type}</td><td>#${r.number}</td><td style="font-weight:700;color:${r.amount<0?'var(--error)':'#8B5CF6'}">${fmt(r.amount)}</td><td style="color:var(--success)">${fmt(r.paid)}</td><td style="color:var(--error);font-weight:700">${fmt(r.remaining)}</td></tr>`).join('');
+
+    const area = document.getElementById('contentArea');
+    area.innerHTML = `
+        <div style="display:flex;align-items:center;gap:6px;margin-bottom:10px">
+            <button class="btn btn-sm btn-outline" onclick="renderSuppliers(document.getElementById('contentArea'))"><span class="material-icons-round" style="font-size:16px">arrow_forward</span></button>
+            <h2 style="font-size:16px;font-weight:800">كشف حساب المورد</h2>
+        </div>
+        <div class="section-card" style="margin-bottom:12px">
+            <div style="display:flex;align-items:center;gap:12px">
+                <div class="user-avatar" style="width:48px;height:48px;font-size:16px;background:#B45309;flex-shrink:0">${s.name.charAt(0)}</div>
+                <div style="flex:1">
+                    <div style="font-weight:800;font-size:15px">${s.name}</div>
+                    <div style="font-size:12px;color:var(--text-secondary)">${s.phone||''}</div>
+                </div>
+                <div style="text-align:left">
+                    <div style="font-size:11px;color:var(--text-secondary)">الرصيد الحالي</div>
+                    <div style="font-weight:800;font-size:18px;color:${s.balance>0?'var(--error)':'var(--success)'}">${fmt(s.balance)}</div>
+                </div>
+            </div>
+        </div>
+        <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:12px">
+            <div class="stat-card"><div class="label">إجمالي المشتريات</div><div class="value">${fmt(totalInvoices)}</div></div>
+            <div class="stat-card"><div class="label">المرتجعات</div><div class="value" style="color:var(--error)">${fmt(totalReturns)}</div></div>
+            <div class="stat-card"><div class="label">المدفوعات</div><div class="value" style="color:var(--success)">${fmt(totalPaid)}</div></div>
+        </div>
+        <div class="section-card">
+            <div class="section-header"><h3>تفاصيل الفواتير والمدفوعات</h3><button class="btn btn-sm btn-outline" onclick="printSupplierStatement('${supId}')"><span class="material-icons-round" style="font-size:14px">print</span> طباعة</button></div>
+            <div class="table-container"><table id="supStmtTable"><thead><tr><th data-sortkey="date" data-sorttype="date" style="cursor:pointer">التاريخ</th><th data-sortkey="type" data-sorttype="str" style="cursor:pointer">النوع</th><th data-sortkey="num" data-sorttype="num" style="cursor:pointer">رقم</th><th data-sortkey="amount" data-sorttype="num" style="text-align:left;cursor:pointer">المبلغ</th><th data-sortkey="paid" data-sorttype="num" style="text-align:left;cursor:pointer">المدفوع</th><th data-sortkey="rem" data-sorttype="num" style="text-align:left;cursor:pointer">المتبقي</th></tr></thead><tbody>
+            ${rows.length===0?'<tr><td colspan="6" style="text-align:center;padding:24px;color:var(--text-secondary)">لا توجد فواتير</td></tr>':tableRows}
+            </tbody></table></div>
+        </div>`;
+    enableTableSort('supStmtTable');
+}
+
+function printSupplierStatement(supId) {
+    const suppliers = DB.get('suppliers');
+    const s = suppliers.find(x=>x.id===supId);
+    if (!s) return;
+    const st = DB.getOne('settings') || {};
+    const invoices = DB.get('invoices').filter(i => i.type==='purchase' && i.customerId===supId);
+    invoices.sort((a,b) => new Date(a.createdAt)-new Date(b.createdAt));
+    const logoHtml = st.storeLogo ? `<img src="${st.storeLogo}" style="width:50px;height:50px;object-fit:contain;margin-bottom:4px;border-radius:8px">` : '';
+
+    let runningBalance = 0;
+    const tableRows = invoices.map(inv => {
+        const amount = inv.isReturn ? -Math.abs(inv.total) : inv.total;
+        const paid = inv.paidAmount || 0;
+        runningBalance += amount - paid;
+        return `<tr style="font-size:11px;border-bottom:1px solid #eee"><td style="padding:4px">${fmtDate(inv.createdAt)}</td><td style="padding:4px">${inv.isReturn?'مرتجع':'شراء'}</td><td style="padding:4px">#${inv.invoiceNumber}</td><td style="padding:4px;text-align:left;font-weight:600">${fmt(amount)}</td><td style="padding:4px;text-align:left;color:green">${fmt(paid)}</td><td style="padding:4px;text-align:left;color:red;font-weight:700">${fmt(runningBalance)}</td></tr>`;
+    }).join('');
+
+    const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>كشف حساب ${s.name}</title><style>
+        @page{size:A4;margin:15mm}body{font-family:'Cairo',Arial,sans-serif;font-size:11px;color:#1a1a1a;margin:0;padding:15mm}
+        .header{text-align:center;margin-bottom:15px;border-bottom:2px solid #000;padding-bottom:10px}
+        table{width:100%;border-collapse:collapse}th{background:#f0f0f0;padding:6px;text-align:right;font-size:10px;border-bottom:2px solid #000}
+        td{padding:4px;text-align:right;font-size:11px}.summary{display:flex;justify-content:space-around;margin-top:15px;padding:10px;background:#f9f9f9;border-radius:8px}
+        .summary-item{text-align:center}.summary-item .label{font-size:10px;color:#666}.summary-item .value{font-size:16px;font-weight:800}
+    </style></head><body>
+        <div class="header">${logoHtml}<h2 style="margin:5px 0">${st.storeName||st.companyName||''}</h2><p style="margin:0;color:#666">كشف حساب المورد: ${s.name}</p><p style="margin:2px 0;color:#888;font-size:10px">تاريخ الطباعة: ${fmtDateTime(new Date().toISOString())}</p></div>
+        <div class="summary">
+            <div class="summary-item"><div class="label">إجمالي المشتريات</div><div class="value">${fmt(invoices.filter(i=>!i.isReturn).reduce((s,i)=>s+i.total,0))}</div></div>
+            <div class="summary-item"><div class="label">المرتجعات</div><div class="value" style="color:red">${fmt(invoices.filter(i=>i.isReturn).reduce((s,i)=>s+Math.abs(i.total),0))}</div></div>
+            <div class="summary-item"><div class="label">المدفوعات</div><div class="value" style="color:green">${fmt(invoices.reduce((s,i)=>s+(i.paidAmount||0),0))}</div></div>
+            <div class="summary-item"><div class="label">الرصيد</div><div class="value" style="color:${s.balance>0?'red':'green'}">${fmt(s.balance)}</div></div>
+        </div>
+        <table><thead><tr><th>التاريخ</th><th>النوع</th><th>رقم</th><th style="text-align:left">المبلغ</th><th style="text-align:left">المدفوع</th><th style="text-align:left">المتبقي</th></tr></thead><tbody>${tableRows}</tbody></table>
+        <script>window.onload=function(){window.print();setTimeout(()=>window.close(),500)}<\/script>
+    </body></html>`;
+    const w = window.open('','_blank');
+    w.document.write(html); w.document.close();
 }
 
 // ==================== INVENTORY ====================
@@ -2018,10 +2616,11 @@ function renderInventory(area) {
             ${canDo('pos')?`<button class="btn btn-sm btn-primary" style="margin-top:6px" onclick="createPOfromLowStock()">طلب شراء</button>`:''}</div></div>`:''}
         <div class="inventory-cards">${products.map(p=>{const wh=warehouses.find(w=>w.id===p.warehouseId);const isLow=p.quantity<=p.minQuantity;
         return`<div class="inv-card ${isLow?'low':''}"><div class="inv-header"><div class="inv-name">${p.name}</div></div><div class="inv-details"><span>شراء: ${fmt(p.buyingPrice)}</span><span>بيع: ${fmt(p.sellingPrice)}</span><span style="color:${isLow?'var(--error)':'var(--success)'};font-weight:700">كمية: ${p.quantity}</span><span>${wh?wh.name:''}</span></div></div>`;}).join('')}</div>
-        <div class="section-card"><div class="table-container"><table><thead><tr><th>المنتج</th><th>شراء</th><th>بيع</th><th>الكمية</th><th>قيمة شراء</th><th>قيمة بيع</th><th>المخزن</th></tr></thead><tbody>
+        <div class="section-card"><div class="table-container"><table id="inventoryTable"><thead><tr><th data-sortkey="name" data-sorttype="str" style="cursor:pointer">المنتج</th><th data-sortkey="buy" data-sorttype="num" style="text-align:left;cursor:pointer">شراء</th><th data-sortkey="sell" data-sorttype="num" style="text-align:left;cursor:pointer">بيع</th><th data-sortkey="qty" data-sorttype="num" style="text-align:left;cursor:pointer">الكمية</th><th data-sortkey="buyv" data-sorttype="num" style="text-align:left;cursor:pointer">قيمة شراء</th><th data-sortkey="sellv" data-sorttype="num" style="text-align:left;cursor:pointer">قيمة بيع</th><th data-sortkey="wh" data-sorttype="str" style="cursor:pointer">المخزن</th></tr></thead><tbody>
         ${products.map(p=>{const wh=warehouses.find(w=>w.id===p.warehouseId);const isLow=p.quantity<=p.minQuantity;
-        return`<tr><td><strong>${p.name}</strong></td><td>${fmt(p.buyingPrice)}</td><td style="color:var(--primary);font-weight:700">${fmt(p.sellingPrice)}</td><td style="font-weight:700;color:${isLow?'var(--error)':'var(--primary)'}">${p.quantity}</td><td>${fmt(p.buyingPrice*p.quantity)}</td><td style="color:var(--success);font-weight:700">${fmt(p.sellingPrice*p.quantity)}</td><td>${wh?wh.name:'-'}</td></tr>`;}).join('')}
+        return`<tr><td data-sort="${p.name}"><strong>${p.name}</strong></td><td data-sort="${p.buyingPrice}">${fmt(p.buyingPrice)}</td><td style="color:var(--primary);font-weight:700" data-sort="${p.sellingPrice}">${fmt(p.sellingPrice)}</td><td style="font-weight:700;color:${isLow?'var(--error)':'var(--primary)'}" data-sort="${p.quantity}">${p.quantity}</td><td data-sort="${p.buyingPrice*p.quantity}">${fmt(p.buyingPrice*p.quantity)}</td><td style="color:var(--success);font-weight:700" data-sort="${p.sellingPrice*p.quantity}">${fmt(p.sellingPrice*p.quantity)}</td><td data-sort="${wh?wh.name:'-'}">${wh?wh.name:'-'}</td></tr>`;}).join('')}
         </tbody></table></div></div>`;
+    enableTableSort('inventoryTable');
 }
 
 function createPOfromLowStock() {
@@ -2208,6 +2807,192 @@ function deleteWarehouse(id) {
     });
 }
 
+// ==================== PURCHASE ORDERS ====================
+function renderPurchaseOrders(area) {
+    const orders = DB.get('purchaseOrders');
+    const suppliers = DB.get('suppliers');
+    const products = DB.get('products');
+    area.innerHTML = `
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;flex-wrap:wrap;gap:6px">
+            <div style="display:flex;align-items:center;gap:6px">
+                <button class="btn btn-sm btn-outline" onclick="showScreen('dashboard')"><span class="material-icons-round" style="font-size:16px">arrow_forward</span></button>
+                <h2 style="font-size:16px;font-weight:800">طلبات الشراء</h2>
+            </div>
+            <button class="btn btn-sm btn-primary" onclick="openPOEditor()"><span class="material-icons-round">add</span> طلب جديد</button>
+        </div>
+        <div style="margin-bottom:10px"><input class="form-control" placeholder="بحث..." oninput="filterList(this.value,'poList')" style="font-size:13px;padding:8px 12px"></div>
+        <div id="poList">${orders.length===0?'<div class="section-card" style="text-align:center;padding:32px;color:var(--text-secondary)"><span class="material-icons-round" style="font-size:40px;display:block;margin-bottom:8px">assignment</span>لا توجد طلبات شراء</div>':orders.map(o=>{
+            const sup = suppliers.find(s=>s.id===o.supplierId);
+            const statusColors = {draft:'#6B7280',sent:'#2563EB',confirmed:'#059669',received:'#10B981',cancelled:'#EF4444'};
+            const statusLabels = {draft:'مسودة',sent:'مرسل',confirmed:'مؤكد',received:'مستلم',cancelled:'ملغي'};
+            const itemsCount = (o.items||[]).length;
+            return `<div class="section-card" style="margin-bottom:8px;padding:12px">
+                <div style="display:flex;align-items:center;gap:10px">
+                    <div class="user-avatar" style="width:40px;height:40px;font-size:14px;background:#8B5CF6;flex-shrink:0">${o.orderNumber}</div>
+                    <div style="flex:1;min-width:0"><strong>طلب #${o.orderNumber}</strong><br>
+                        <small style="color:var(--text-secondary)">${sup?sup.name:'—'} | ${itemsCount} صنف | ${fmt(o.total||0)}</small><br>
+                        <span class="badge" style="background:${statusColors[o.status]||'#6B7280'}22;color:${statusColors[o.status]||'#6B7280'};font-size:10px;margin-top:2px">${statusLabels[o.status]||o.status}</span>
+                    </div>
+                    <div style="display:flex;gap:4px;flex-shrink:0">
+                        ${o.status!=='received'&&o.status!=='cancelled'?`<button class="btn btn-sm btn-outline" onclick="convertToPurchase('${o.id}')" title="تحويل لفاتورة شراء وتحديث المخزون"><span class="material-icons-round" style="font-size:14px">shopping_cart</span> تحويل</button>`:''}
+                        <button class="btn btn-sm btn-outline" onclick="openPOEditor('${o.id}')"><span class="material-icons-round">edit</span></button>
+                        <button class="btn btn-sm btn-danger" onclick="deletePurchaseOrder('${o.id}')"><span class="material-icons-round">delete</span></button>
+                    </div>
+                </div>
+            </div>`;
+        }).join('')}</div>`;
+}
+
+function openPurchaseOrderModal(id) {
+    const orders = DB.get('purchaseOrders');
+    const o = id ? orders.find(x=>x.id===id) : null;
+    const suppliers = DB.get('suppliers');
+    const products = DB.get('products');
+    const suppliersHtml = suppliers.map(s => `<option value="${s.id}" ${o&&o.supplierId===s.id?'selected':''}>${s.name}</option>`).join('');
+    const statuses = [{val:'draft',label:'مسودة'},{val:'sent',label:'مرسل'},{val:'confirmed',label:'مؤكد'},{val:'received',label:'مستلم'},{val:'cancelled',label:'ملغي'}];
+    const statusHtml = statuses.map(s => `<option value="${s.val}" ${o&&o.status===s.val?'selected':''}>${s.label}</option>`).join('');
+    const items = o ? o.items : [{productId:'',quantity:1,unitPrice:0}];
+    const itemsHtml = items.map((item,i) => {
+        const prods = products.map(p => `<option value="${p.id}" ${item.productId===p.id?'selected':''}>${p.name} (${p.barcode||''}) - ${fmt(p.buyingPrice)}</option>`).join('');
+        return `<div class="po-item" style="display:grid;grid-template-columns:1fr 60px 80px auto;gap:6px;align-items:center;margin-bottom:6px">
+            <select class="form-control po-prod" style="font-size:12px;padding:6px">${prods}</select>
+            <input class="form-control po-qty" type="number" value="${item.quantity}" min="1" style="font-size:12px;padding:6px">
+            <input class="form-control po-price" type="number" value="${item.unitPrice}" step="0.01" style="font-size:12px;padding:6px">
+            <button class="btn btn-sm btn-danger" onclick="this.parentElement.remove()" style="padding:4px"><span class="material-icons-round" style="font-size:14px">close</span></button>
+        </div>`;
+    }).join('');
+
+    openModal(o?'تعديل طلب شراء':'طلب شراء جديد', `
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+            <div class="form-group"><label>رقم الطلب</label><input class="form-control" id="poNumber" value="${o?o.orderNumber:(orders.length?Math.max(...orders.map(x=>x.orderNumber))+1:1)}" ${o?'disabled':''}></div>
+            <div class="form-group"><label>المورد *</label><select class="form-control" id="poSupplier"><option value="">اختر مورد</option>${suppliersHtml}</select></div>
+        </div>
+        <div class="form-group"><label>الحالة</label><select class="form-control" id="poStatus">${statusHtml}</select></div>
+        <div class="form-group"><label>ملاحظات</label><textarea class="form-control" id="poNotes" rows="2">${o?o.notes||'':''}</textarea></div>
+        <div class="form-group">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px"><label style="margin:0">الأصناف</label><button class="btn btn-sm btn-outline" onclick="addPOItem()"><span class="material-icons-round" style="font-size:14px">add</span></button></div>
+            <div id="poItemsContainer">${itemsHtml}</div>
+        </div>
+    `, `<button class="btn btn-primary" onclick="savePurchaseOrder('${id||''}')">حفظ</button><button class="btn btn-outline" onclick="closeModal()">إلغاء</button>`);
+}
+
+function addPOItem() {
+    const products = DB.get('products');
+    const prods = products.map(p => `<option value="${p.id}">${p.name} (${p.barcode||''}) - ${fmt(p.buyingPrice)}</option>`).join('');
+    const div = document.createElement('div');
+    div.className = 'po-item';
+    div.style.cssText = 'display:grid;grid-template-columns:1fr 60px 80px auto;gap:6px;align-items:center;margin-bottom:6px';
+    div.innerHTML = `
+        <select class="form-control po-prod" style="font-size:12px;padding:6px"><option value="">اختر صنف</option>${prods}</select>
+        <input class="form-control po-qty" type="number" value="1" min="1" style="font-size:12px;padding:6px">
+        <input class="form-control po-price" type="number" value="0" step="0.01" style="font-size:12px;padding:6px">
+        <button class="btn btn-sm btn-danger" onclick="this.parentElement.remove()" style="padding:4px"><span class="material-icons-round" style="font-size:14px">close</span></button>`;
+    document.getElementById('poItemsContainer').appendChild(div);
+}
+
+function savePurchaseOrder(id) {
+    const supplierId = document.getElementById('poSupplier').value;
+    if (!supplierId) { toast('اختر مورد', 'error'); return; }
+    const itemsEls = document.querySelectorAll('.po-item');
+    if (itemsEls.length === 0) { toast('أضف صنف واحد على الأقل', 'error'); return; }
+    const items = [];
+    itemsEls.forEach(el => {
+        const productId = el.querySelector('.po-prod').value;
+        const quantity = parseInt(el.querySelector('.po-qty').value)||0;
+        const unitPrice = parseFloat(el.querySelector('.po-price').value)||0;
+        if (productId && quantity > 0) items.push({productId, quantity, unitPrice, total: quantity * unitPrice});
+    });
+    const total = items.reduce((s,i) => s + i.total, 0);
+    const orders = DB.get('purchaseOrders');
+    const orderNumber = parseInt(document.getElementById('poNumber').value);
+    const notes = document.getElementById('poNotes').value.trim();
+    const status = document.getElementById('poStatus').value;
+
+    if (id) {
+        const idx = orders.findIndex(o=>o.id===id);
+        if (idx !== -1) { orders[idx].supplierId = supplierId; orders[idx].items = items; orders[idx].total = total; orders[idx].notes = notes; orders[idx].status = status; }
+    } else {
+        orders.push({ id:'po'+Date.now(), orderNumber, supplierId, items, total, notes, status, createdAt: new Date().toISOString() });
+    }
+    DB.set('purchaseOrders', orders);
+    toast('تم حفظ طلب الشراء');
+    closeModal();
+    renderPurchaseOrders(document.getElementById('contentArea'));
+}
+
+function deletePurchaseOrder(id) {
+    confirmModal('هل أنت متأكد من حذف هذا الطلب؟', function() {
+        const orders = DB.get('purchaseOrders').filter(o=>o.id!==id);
+        DB.set('purchaseOrders', orders);
+        toast('تم الحذف');
+        renderPurchaseOrders(document.getElementById('contentArea'));
+    });
+}
+
+function openPOEditor(poId) {
+    const orders = DB.get('purchaseOrders');
+    const o = poId ? orders.find(x=>x.id===poId) : null;
+    const products = DB.get('products');
+    purCart = o ? o.items.map(i=>({ productId:i.productId, productName:(products.find(p=>p.id===i.productId)||{}).name||'', unitPrice:i.unitPrice, quantity:i.quantity, discount:0, taxRate:0 })) : [];
+    purSupplierId = o?o.supplierId:'';
+    purSupplierName = o?o.supplierName:'';
+    purDiscount = 0; purDiscountType='amount'; purPaymentMethod='cash'; purNotes = o?o.notes||'':'';
+    poContext = poId || 'new';
+    purMode='invoice';
+    showScreen('purchases');
+}
+
+function savePOFromPurchases(poId) {
+    if (purCart.length===0) { toast('السلة فارغة','error'); return; }
+    if (!purSupplierId) { toast('اختر مورد','error'); return; }
+    const subtotal = purCart.reduce((s,i)=>s+i.unitPrice*i.quantity,0);
+    const itemDiscounts = purCart.reduce((s,i)=>s+(i.discount||0),0);
+    const invDiscount = purDiscountType==='percent'?(subtotal-itemDiscounts)*purDiscount/100:purDiscount;
+    const taxable = subtotal - itemDiscounts - invDiscount;
+    const tax = curTax||0;
+    const total = taxable + tax;
+    const items = purCart.map(i=>({ productId:i.productId, quantity:i.quantity, unitPrice:i.unitPrice, total:i.unitPrice*i.quantity }));
+    const orders = DB.get('purchaseOrders');
+    const idx = orders.findIndex(o=>o.id===poId);
+    const orderNumber = idx>=0 ? orders[idx].orderNumber : (orders.length?Math.max(...orders.map(x=>x.orderNumber))+1:1);
+    const data = { supplierId:purSupplierId, supplierName:purSupplierName, items, total, taxAmount:tax, discount:invDiscount+itemDiscounts, notes:purNotes||'', status:'draft', createdAt:new Date().toISOString() };
+    if (idx>=0) Object.assign(orders[idx], data);
+    else orders.push({ id:'po'+Date.now(), orderNumber, ...data });
+    DB.set('purchaseOrders', orders);
+    poContext=null; purCart=[]; purSupplierId=''; purSupplierName=''; purDiscount=0; curTax=0; purDiscountType='amount'; purPaymentMethod='cash'; purNotes='';
+    toast('تم حفظ طلب الشراء');
+    showScreen('purchaseOrders');
+}
+
+function convertToPurchase(poId) {
+    const orders = DB.get('purchaseOrders');
+    const o = orders.find(x=>x.id===poId);
+    if (!o) return;
+    if (o.status==='received'||o.status==='cancelled') { toast('تم تحويل هذا الطلب مسبقاً','warning'); return; }
+    confirmModal('تحويل الطلب لفاتورة شراء وتحديث المخزون؟', function() {
+        const products = DB.get('products');
+        const items = (o.items||[]).map(i=>({ productId:i.productId, productName:(products.find(p=>p.id===i.productId)||{}).name||'', unitPrice:i.unitPrice, quantity:i.quantity, discount:0, taxRate:0 }));
+        const subtotal = items.reduce((s,i)=>s+i.unitPrice*i.quantity,0);
+        const invoice = {
+            id:uid(), invoiceNumber:nextInvoiceNumber(), items,
+            subtotal, discount:0, taxAmount:0, total:subtotal,
+            paidAmount:0, remainingAmount:subtotal,
+            paymentMethod:'نقدي', status:'paid', type:'purchase',
+            customerId:o.supplierId, customerName:o.supplierName,
+            notes:(o.notes||'')+` (من طلب شراء #${o.orderNumber})`, createdBy:currentUser?.username||'',
+            createdAt:new Date().toISOString()
+        };
+        const invoices = DB.get('invoices'); invoices.unshift(invoice); DB.set('invoices', invoices);
+        const prods = DB.get('products');
+        const movements = DB.get('movements')||[];
+        items.forEach(item=>{ const p=prods.find(x=>x.id===item.productId); if(p){ p.quantity += item.quantity; movements.unshift({ id:uid(), productId:p.id, productName:p.name, type:'purchase', quantity:item.quantity, invoiceNumber:invoice.invoiceNumber, date:new Date().toISOString() }); } });
+        DB.set('products', prods); DB.set('movements', movements);
+        o.status='received'; DB.set('purchaseOrders', orders);
+        toast('تم تحويل الطلب لفاتورة شراء وتحديث المخزون','success');
+        renderPurchaseOrders(document.getElementById('contentArea'));
+    });
+}
+
 // ==================== EXPENSES ====================
 function renderExpenses(area) {
     const expenses = DB.get('expenses');
@@ -2226,9 +3011,10 @@ function renderExpenses(area) {
         </div>
         <div class="section-card" style="margin-bottom:12px"><div style="display:flex;justify-content:space-between;align-items:center"><span style="color:var(--text-secondary)">الإجمالي</span><span style="font-size:18px;font-weight:800;color:var(--error)" id="expFilteredTotal">${fmt(total)}</span></div></div>
         ${dateFilterBar('exp')}
-        <div class="section-card"><div class="table-container"><table><thead><tr><th>الوصف</th><th>المبلغ</th><th>التاريخ</th><th>إجراءات</th></tr></thead><tbody id="expTableBody">
-        ${expenses.map(e=>`<tr data-date="${e.date}" data-total="${e.amount}" style="cursor:pointer" onclick="openExpenseModal('${e.id}')"><td><strong>${e.description||'-'}</strong>${e.notes?`<br><small style="color:var(--text-secondary)">${e.notes}</small>`:''}</td><td style="font-weight:700;color:var(--error)">${fmt(e.amount)}</td><td>${fmtDate(e.date)}</td><td><button class="btn btn-sm btn-danger" onclick="event.stopPropagation();deleteExpense('${e.id}')"><span class="material-icons-round">delete</span></button></td></tr>`).join('')}
+        <div class="section-card"><div class="table-container"><table id="expensesTable"><thead><tr><th data-sortkey="desc" data-sorttype="str" style="cursor:pointer">الوصف</th><th data-sortkey="total" data-sorttype="num" style="text-align:left;cursor:pointer">المبلغ</th><th data-sortkey="date" data-sorttype="date" style="cursor:pointer">التاريخ</th><th data-sortkey="act" data-sorttype="str" style="cursor:pointer">إجراءات</th></tr></thead><tbody id="expTableBody">
+        ${expenses.map(e=>`<tr data-date="${e.date}" data-total="${e.amount}" style="cursor:pointer" onclick="openExpenseModal('${e.id}')"><td data-sort="${e.description||'-'}"><strong>${e.description||'-'}</strong>${e.notes?`<br><small style="color:var(--text-secondary)">${e.notes}</small>`:''}</td><td style="font-weight:700;color:var(--error)" data-sort="${e.amount}">${fmt(e.amount)}</td><td data-sort="${e.date}">${fmtDate(e.date)}</td><td data-sort="x"><button class="btn btn-sm btn-danger" onclick="event.stopPropagation();deleteExpense('${e.id}')"><span class="material-icons-round">delete</span></button></td></tr>`).join('')}
         </tbody></table></div></div>`;
+    enableTableSort('expensesTable');
 }
 
 function openExpenseModal(id) {
@@ -2480,6 +3266,7 @@ function renderCountSummary(area) {
         <div style="display:flex;gap:6px;margin-bottom:10px;flex-wrap:wrap">
             <button class="btn btn-sm btn-primary" onclick="countMode='new';renderInventoryCounts(document.getElementById('contentArea'))"><span class="material-icons-round" style="font-size:14px">edit</span> تعديل</button>
             <button class="btn btn-sm btn-success" onclick="postInventoryCount()"><span class="material-icons-round" style="font-size:14px">check_circle</span> ترحيل الفوارق</button>
+            <button class="btn btn-sm btn-outline" onclick="transferCountToPurchase()"><span class="material-icons-round" style="font-size:14px">shopping_cart</span> نقل العجز لسلة الشراء</button>
         </div>
         <div class="stats-grid" style="grid-template-columns:1fr 1fr 1fr;margin-bottom:10px">
             <div class="stat-card" style="cursor:default"><div class="label">زيادة</div><div class="value" style="color:var(--success)">${increases.length}</div></div>
@@ -2559,7 +3346,11 @@ function postInventoryCount() {
     let hasChanges = false;
 
     count.items.forEach(item => {
-        if (item.adjustedDiff === 0) return;
+        const computed = (item.actualQty || 0) - (item.systemQty || 0);
+        const diff = item.adjustedDiff !== 0 ? item.adjustedDiff : computed;
+        item.difference = computed;
+        item.adjustedDiff = diff;
+        if (diff === 0) return;
         hasChanges = true;
         const pIdx = products.findIndex(p => p.id === item.productId);
         if (pIdx < 0) return;
@@ -2591,6 +3382,27 @@ function postInventoryCount() {
     countMode = 'list';
     toast('تم ترحيل الفوارق بنجاح');
     renderInventoryCounts(document.getElementById('contentArea'));
+}
+
+function transferCountToPurchase() {
+    const counts = DB.get('inventoryCounts') || [];
+    const count = counts.find(c => c.id === currentCountId);
+    if (!count) return;
+    const products = DB.get('products');
+    let added = 0;
+    (count.items || []).forEach(item => {
+        const shortage = (item.systemQty || 0) - (item.actualQty || 0);
+        if (shortage <= 0) return;
+        const p = products.find(x => x.id === item.productId);
+        if (!p) return;
+        const existing = purCart.find(c => c.productId === p.id);
+        if (existing) existing.quantity += shortage;
+        else purCart.push({ id: 'pci' + Date.now() + Math.random(), productId: p.id, productName: p.name, unitPrice: p.buyingPrice || p.cost || 0, quantity: shortage, discount: 0, taxRate: getTaxRate() });
+        added++;
+    });
+    if (added === 0) { toast('لا توجد عجزات تحتاج شراء', 'error'); return; }
+    toast('تم نقل ' + added + ' صنف لسلة الشراء');
+    showScreen('purchases');
 }
 
 function viewCount(id) {
@@ -2683,8 +3495,169 @@ function renderReports(area) {
             <div class="stat-card"><div class="icon" style="background:rgba(16,185,129,0.1)"><span class="material-icons-round" style="color:var(--success)">account_balance_wallet</span></div><div class="label">صافي الربح</div><div class="value" style="color:${(totalSales-totalPurchases-totalExpenses)>=0?'var(--success)':'var(--error)'}">${fmt(totalSales-totalPurchases-totalExpenses)}</div></div>
         </div>
         <div class="section-card"><div class="section-header"><h3>أكثر المنتجات مبيعاً</h3></div>
-        ${(() => { const prodSales = {}; sales.forEach(inv => inv.items.forEach(item => { prodSales[item.productId] = (prodSales[item.productId]||{name:item.productName,qty:0,total:0}); prodSales[item.productId].qty += item.quantity; prodSales[item.productId].total += item.total; })); return Object.values(prodSales).sort((a,b)=>b.total-a.total).slice(0,5).map(p=>`<div style="display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--border);font-size:13px"><span>${p.name} (${p.qty} وحدة)</span><strong style="color:var(--primary)">${fmt(p.total)}</strong></div>`).join('')||'<div style="padding:16px;color:var(--text-secondary);text-align:center">لا توجد بيانات</div>'; })()}
+        ${(() => { const prodSales = {}; sales.forEach(inv => inv.items.forEach(item => { prodSales[item.productId] = (prodSales[item.productId]||{name:item.productName,qty:0,total:0}); prodSales[item.productId].qty += item.quantity; prodSales[item.productId].total += itemNet(item); })); return Object.values(prodSales).sort((a,b)=>b.total-a.total).slice(0,5).map(p=>`<div style="display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--border);font-size:13px"><span>${p.name} (${p.qty} وحدة)</span><strong style="color:var(--primary)">${fmt(p.total)}</strong></div>`).join('')||'<div style="padding:16px;color:var(--text-secondary);text-align:center">لا توجد بيانات</div>'; })()}
+        </div>
+        <div class="section-card" style="margin-top:12px"><div class="section-header"><h3>تقارير الأرباح التفصيلية</h3></div>
+            <button class="btn btn-sm btn-primary" style="width:100%" onclick="window._profitTab='item';showScreen('profitReport')"><span class="material-icons-round" style="font-size:16px">insights</span> تقرير الأرباح حسب الصنف / العميل / المورد</button>
         </div>`;
+}
+
+// ==================== PROFIT REPORT (by item/customer/supplier) ====================
+function renderProfitReport(area) {
+    const tab = window._profitTab || 'item';
+    const products = DB.get('products');
+    const invoices = DB.get('invoices');
+    const sales = invoices.filter(i=>i.type==='sale' && !i.isReturn);
+    const purchases = invoices.filter(i=>i.type==='purchase' && !i.isReturn);
+    const costOf = (it) => itemCost(it);
+
+    let rows = [];
+    if (tab === 'item') {
+        const map = {};
+        sales.forEach(inv => inv.items.forEach(it => {
+            if (!map[it.productId]) map[it.productId] = { label:it.productName, sub:'', revenue:0, cost:0, qty:0 };
+            map[it.productId].revenue += itemNet(it);
+            map[it.productId].cost += it.quantity * costOf(it);
+            map[it.productId].qty += it.quantity;
+        }));
+        rows = Object.values(map).map(r => ({ ...r, sub:'', profit: r.revenue - r.cost }));
+    } else if (tab === 'customer') {
+        const map = {};
+        sales.forEach(inv => {
+            const id = inv.customerId || 'walkin';
+            if (!map[id]) map[id] = { label:inv.customerName||'عميل نقدي', sub:'', revenue:0, cost:0, count:0 };
+            map[id].revenue += inv.total;
+            map[id].count += 1;
+            inv.items.forEach(it => map[id].cost += it.quantity * costOf(it));
+        });
+        rows = Object.values(map).map(r => ({ ...r, sub:'', profit: r.revenue - r.cost }));
+    } else {
+        const map = {};
+        purchases.forEach(inv => {
+            const id = inv.customerId || 'none';
+            if (!map[id]) map[id] = { label:inv.customerName||'—', sub:'', cost:0, count:0, qty:0 };
+            map[id].cost += inv.total;
+            map[id].count += 1;
+            inv.items.forEach(it => map[id].qty += it.quantity);
+        });
+        rows = Object.values(map).map(r => {
+            let soldRev = 0, soldCost = 0;
+            sales.forEach(inv => inv.items.forEach(it => { if ((products.find(x=>x.id===it.productId)||{}).supplierId === r.id) { soldRev += itemNet(it); soldCost += it.quantity * costOf(it); } }));
+            return { ...r, sub:'', revenue:soldRev, profit: soldRev - soldCost };
+        });
+    }
+    if (!window._profitSort) window._profitSort = { key:'profit', dir:'desc' };
+    _sortState['profitTable'] = window._profitSort;
+
+    const totalRev = rows.reduce((s,r)=>s+(r.revenue||0),0);
+    const totalCost = rows.reduce((s,r)=>s+(r.cost||0),0);
+    const totalProfit = totalRev - totalCost;
+    const profitPct = totalRev>0 ? (totalProfit/totalRev*100) : 0;
+
+    const tabs = [['item','حسب الصنف'],['customer','حسب العميل'],['supplier','حسب المورد']];
+    const isSup = tab==='supplier';
+    const hasCount = tab==='customer';
+    const hasQty = tab!=='customer';
+    const colLabel = tab==='item'?'الصنف':tab==='customer'?'العميل':'المورد';
+    const colCount = 3 + (hasCount?1:0) + (hasQty?1:0);
+
+    const tableRows = rows.map(r => {
+        const pct = (r.revenue||0)>0 ? (r.profit/(r.revenue)*100) : 0;
+        return `<tr>
+            <td data-sort="${r.label}"><strong>${r.label}</strong><br><small style="color:var(--text-secondary)">${r.sub}</small></td>
+            ${hasCount?`<td style="text-align:left" data-sort="${r.count||0}">${r.count||0}</td>`:''}
+            ${hasQty?`<td style="text-align:left" data-sort="${r.qty||0}">${fmt(r.qty||0)}</td>`:''}
+            <td style="text-align:left;font-weight:700" data-sort="${r.revenue||0}">${fmt(r.revenue||0)}</td>
+            <td style="text-align:left;color:var(--error)" data-sort="${r.cost||0}">${fmt(r.cost||0)}</td>
+            <td style="text-align:left;font-weight:800;color:${r.profit>=0?'var(--success)':'var(--error)'}" data-sort="${r.profit||0}">${fmt(r.profit||0)}</td>
+            <td style="text-align:left;color:${r.profit>=0?'var(--success)':'var(--error)'}" data-sort="${pct}">${(r.revenue||0)>0?pct.toFixed(1)+'%':'—'}</td>
+        </tr>`;
+    }).join('');
+
+    area.innerHTML = `
+        <div style="display:flex;align-items:center;gap:6px;margin-bottom:10px">
+            <button class="btn btn-sm btn-outline" onclick="showScreen('reports')"><span class="material-icons-round" style="font-size:16px">arrow_forward</span></button>
+            <h2 style="font-size:16px;font-weight:800">تقرير الأرباح التفصيلي</h2>
+        </div>
+        <div style="display:flex;gap:6px;margin-bottom:12px;overflow-x:auto;padding-bottom:4px">
+            ${tabs.map(t=>`<button class="btn btn-sm ${tab===t[0]?'btn-primary':'btn-outline'}" onclick="window._profitTab='${t[0]}';window._profitSort=null;renderProfitReport(document.getElementById('contentArea'))">${t[1]}</button>`).join('')}
+        </div>
+        <div class="stats-grid" style="grid-template-columns:repeat(3,1fr);margin-bottom:12px">
+            <div class="stat-card"><div class="label">${isSup?'المشتريات':'المبيعات'}</div><div class="value">${fmt(totalRev||totalCost)}</div></div>
+            <div class="stat-card"><div class="label">إجمالي التكلفة</div><div class="value" style="color:var(--error)">${fmt(totalCost)}</div></div>
+            <div class="stat-card"><div class="label">صافي الربح</div><div class="value" style="color:${totalProfit>=0?'var(--success)':'var(--error)'}">${fmt(totalProfit)} (${profitPct.toFixed(1)}%)</div></div>
+        </div>
+        <div class="section-card">
+            <div class="section-header"><h3>${tab==='item'?'الأرباح حسب الصنف':tab==='customer'?'الأرباح حسب العميل':'الأرباح والمشتريات حسب المورد'}</h3>
+                <div style="display:flex;gap:4px">
+                    <button class="btn btn-sm btn-outline" onclick="exportProfitReportCSV()"><span class="material-icons-round" style="font-size:14px">file_download</span> CSV</button>
+                    <button class="btn btn-sm btn-outline" onclick="printProfitReport()"><span class="material-icons-round" style="font-size:14px">print</span> طباعة</button>
+                </div>
+            </div>
+            <div class="table-container"><table id="profitTable"><thead><tr>
+                <th data-sortkey="label" data-sorttype="str" style="cursor:pointer">${colLabel}</th>
+                ${hasCount?`<th data-sortkey="count" data-sorttype="num" style="text-align:left;cursor:pointer">الفواتير</th>`:''}
+                ${hasQty?`<th data-sortkey="qty" data-sorttype="num" style="text-align:left;cursor:pointer">الكمية</th>`:''}
+                <th data-sortkey="revenue" data-sorttype="num" style="text-align:left;cursor:pointer">${isSup?'المباع (تقديري)':'المبيعات'}</th>
+                <th data-sortkey="cost" data-sorttype="num" style="text-align:left;cursor:pointer">التكلفة</th>
+                <th data-sortkey="profit" data-sorttype="num" style="text-align:left;cursor:pointer">الربح</th>
+                <th data-sortkey="pct" data-sorttype="num" style="text-align:left;cursor:pointer">نسبة الربح</th>
+            </tr></thead><tbody>
+            ${rows.length===0?`<tr><td colspan="${colCount}" style="text-align:center;padding:30px;color:var(--text-secondary)">لا توجد بيانات</td></tr>`:tableRows}
+            </tbody></table></div>
+        </div>`;
+    enableTableSort('profitTable');
+}
+
+function exportProfitReportCSV() {
+    const tab = window._profitTab || 'item';
+    const products = DB.get('products');
+    const invoices = DB.get('invoices');
+    const sales = invoices.filter(i=>i.type==='sale' && !i.isReturn);
+    const purchases = invoices.filter(i=>i.type==='purchase' && !i.isReturn);
+    const costOf = (it) => itemCost(it);
+    let rows = [];
+    if (tab==='item') {
+        const map = {};
+        sales.forEach(inv => inv.items.forEach(it => { if(!map[it.productId]) map[it.productId]={l:it.productName,r:0,c:0,q:0}; map[it.productId].r+=itemNet(it); map[it.productId].c+=it.quantity*costOf(it); map[it.productId].q+=it.quantity; }));
+        rows = Object.values(map).map(r=>({l:r.l,sub:r.q+' وحدة',rev:r.r,cost:r.c,profit:r.r-r.c}));
+    } else if (tab==='customer') {
+        const map = {};
+        sales.forEach(inv => { const id=inv.customerId||'walkin'; if(!map[id]) map[id]={l:inv.customerName||'عميل نقدي',r:0,c:0,n:0}; map[id].r+=inv.total; map[id].n++; inv.items.forEach(it=>map[id].c+=it.quantity*costOf(it)); });
+        rows = Object.values(map).map(r=>({l:r.l,sub:r.n+' فاتورة',rev:r.r,cost:r.c,profit:r.r-r.c}));
+    } else {
+        const map = {};
+        purchases.forEach(inv => { const id=inv.customerId||'none'; if(!map[id]) map[id]={l:inv.customerName||'—',cost:0,n:0,q:0}; map[id].cost+=inv.total; map[id].n++; inv.items.forEach(it=>map[id].q+=it.quantity); });
+        rows = Object.values(map).map(r=>{ let sr=0,sc=0; sales.forEach(inv=>inv.items.forEach(it=>{ if((products.find(x=>x.id===it.productId)||{}).supplierId===r.id){sr+=itemNet(it);sc+=it.quantity*costOf(it);} })); return {l:r.l,sub:r.n+' فاتورة | '+r.q+' وحدة',rev:sr,cost:r.c,profit:sr-sc}; });
+    }
+    let csv = 'الكيان;التفاصيل;المبيعات;التكلفة;الربح;نسبة الربح\r\n';
+    rows.forEach(r => { const pct=(r.rev||0)>0?(r.profit/r.rev*100):0; csv += `${r.l};${r.sub};${r.rev||0};${r.cost||0};${r.profit||0};${(r.rev||0)>0?pct.toFixed(1)+'%':'—'}\r\n`; });
+    downloadCSV(csv, `تقرير_الأرباح_${tab}.csv`);
+}
+
+function printProfitReport() {
+    const tab = window._profitTab || 'item';
+    const st = DB.getOne('settings') || {};
+    const products = DB.get('products');
+    const invoices = DB.get('invoices');
+    const sales = invoices.filter(i=>i.type==='sale' && !i.isReturn);
+    const purchases = invoices.filter(i=>i.type==='purchase' && !i.isReturn);
+    const costOf = (it) => itemCost(it);
+    let rows = [];
+    if (tab==='item') { const map={}; sales.forEach(inv=>inv.items.forEach(it=>{ if(!map[it.productId]) map[it.productId]={l:it.productName,r:0,c:0,q:0}; map[it.productId].r+=itemNet(it); map[it.productId].c+=it.quantity*costOf(it); map[it.productId].q+=it.quantity; })); rows=Object.values(map).map(r=>({...r,profit:r.r-r.c})); }
+    else if (tab==='customer') { const map={}; sales.forEach(inv=>{ const id=inv.customerId||'walkin'; if(!map[id]) map[id]={l:inv.customerName||'عميل نقدي',r:0,c:0,n:0}; map[id].r+=inv.total; map[id].n++; inv.items.forEach(it=>map[id].c+=it.quantity*costOf(it)); }); rows=Object.values(map).map(r=>({...r,sub:r.n+' فاتورة',profit:r.r-r.c})); }
+    else { const map={}; purchases.forEach(inv=>{ const id=inv.customerId||'none'; if(!map[id]) map[id]={l:inv.customerName||'—',cost:0,n:0,q:0}; map[id].cost+=inv.total; map[id].n++; inv.items.forEach(it=>map[id].q+=it.quantity); }); rows=Object.values(map).map(r=>{ let sr=0,sc=0; sales.forEach(inv=>inv.items.forEach(it=>{ if((products.find(x=>x.id===it.productId)||{}).supplierId===r.id){sr+=itemNet(it);sc+=it.quantity*costOf(it);} })); return {...r,sub:r.n+' فاتورة | '+r.q+' وحدة',rev:sr,profit:sr-sc}; }); }
+    rows.sort((a,b)=>b.profit-a.profit);
+    const totalRev=rows.reduce((s,r)=>s+(r.rev||0),0), totalCost=rows.reduce((s,r)=>s+(r.cost||0),0), totalProfit=totalRev-totalCost;
+    const title = tab==='item'?'تقرير الأرباح حسب الصنف':tab==='customer'?'تقرير الأرباح حسب العميل':'تقرير الأرباح والمشتريات حسب المورد';
+    const body = rows.map(r=>`<tr style="font-size:11px;border-bottom:1px solid #eee"><td style="padding:4px">${r.l}</td><td style="padding:4px;text-align:left;font-weight:600">${fmt(r.rev||0)}</td><td style="padding:4px;text-align:left;color:red">${fmt(r.cost||0)}</td><td style="padding:4px;text-align:left;font-weight:700;color:${r.profit>=0?'green':'red'}">${fmt(r.profit||0)}</td></tr>`).join('');
+    const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>${title}</title><style>@page{size:A4;margin:15mm}body{font-family:'Cairo',Arial,sans-serif;font-size:11px;color:#1a1a1a;margin:0;padding:15mm}table{width:100%;border-collapse:collapse}th{background:#f0f0f0;padding:6px;text-align:right;font-size:10px;border-bottom:2px solid #000}td{padding:4px;text-align:right}.sum{display:flex;justify-content:space-around;margin-top:12px;padding:10px;background:#f9f9f9;border-radius:8px}.sum div{text-align:center}.sum .v{font-size:16px;font-weight:800}</style></head><body>
+        <h2 style="text-align:center;margin:0 0 4px">${st.storeName||st.companyName||''}</h2>
+        <h3 style="text-align:center;margin:0 0 10px;color:#555">${title}</h3>
+        <div class="sum"><div><div style="font-size:10px;color:#666">${tab==='supplier'?'المشتريات':'المبيعات'}</div><div class="v">${fmt(totalRev||totalCost)}</div></div><div><div style="font-size:10px;color:#666">التكلفة</div><div class="v" style="color:red">${fmt(totalCost)}</div></div><div><div style="font-size:10px;color:#666">صافي الربح</div><div class="v" style="color:${totalProfit>=0?'green':'red'}">${fmt(totalProfit)}</div></div></div>
+        <table style="margin-top:12px"><thead><tr><th>الكيان</th><th style="text-align:left">${tab==='supplier'?'المباع تقديري':'المبيعات'}</th><th style="text-align:left">التكلفة</th><th style="text-align:left">الربح</th></tr></thead><tbody>${body}</tbody></table>
+        <script>window.onload=function(){window.print();setTimeout(()=>window.close(),500)}<\/script></body></html>`;
+    const w = window.open('','_blank'); w.document.write(html); w.document.close();
 }
 
 // ==================== MOVEMENTS ====================
@@ -2699,10 +3672,11 @@ function renderMovements(area) {
             <div style="flex:1;min-width:150px"><input class="form-control" placeholder="بحث بالمنتج..." id="movSearch" oninput="filterMovements()" style="font-size:13px;padding:8px 12px"></div>
             <div style="min-width:120px"><select class="form-control" id="movTypeFilter" onchange="filterMovements()" style="font-size:12px;padding:6px 10px"><option value="sale">بيع</option><option value="purchase">شراء</option><option value="transfer">تحويل</option><option value="adjustment">جرد</option></select></div>
         </div>
-        <div class="section-card"><div class="table-container"><table><thead><tr><th>التاريخ</th><th>المنتج</th><th>النوع</th><th>الكمية</th><th>رقم الفاتورة</th></tr></thead><tbody id="movementsBody">
+        <div class="section-card"><div class="table-container"><table id="movementsTable"><thead><tr><th data-sortkey="date" data-sorttype="date" style="cursor:pointer">التاريخ</th><th data-sortkey="name" data-sorttype="str" style="cursor:pointer">المنتج</th><th data-sortkey="type" data-sorttype="str" style="cursor:pointer">النوع</th><th data-sortkey="qty" data-sorttype="num" style="text-align:left;cursor:pointer">الكمية</th><th data-sortkey="inv" data-sorttype="str" style="cursor:pointer">رقم الفاتورة</th></tr></thead><tbody id="movementsBody">
         ${movements.length===0?'<tr><td colspan="5" style="text-align:center;padding:30px;color:var(--text-secondary)">لا توجد حركات بعد</td></tr>':
-        movements.map(m=>`<tr data-name="${m.productName}" data-type="${m.type}"><td>${fmtDateTime(m.date)}</td><td><strong>${m.productName}</strong></td><td><span class="badge ${m.type==='sale'?'badge-danger':m.type==='purchase'?'badge-success':m.type==='adjustment'?'badge-warning':'badge-info'}">${m.type==='sale'?'بيع':m.type==='purchase'?'شراء':m.type==='adjustment'?'جرد':'تحويل'}</span></td><td style="font-weight:700;color:${m.quantity>0?'var(--success)':'var(--error)'}">${m.quantity>0?'+':''}${m.quantity}</td><td>${m.invoiceNumber||m.note||'-'}</td></tr>`).join('')}
+        movements.map(m=>`<tr data-name="${m.productName}" data-type="${m.type}"><td data-sort="${m.date}">${fmtDateTime(m.date)}</td><td data-sort="${m.productName}"><strong>${m.productName}</strong></td><td data-sort="${m.type}"><span class="badge ${m.type==='sale'?'badge-danger':m.type==='purchase'?'badge-success':m.type==='adjustment'?'badge-warning':'badge-info'}">${m.type==='sale'?'بيع':m.type==='purchase'?'شراء':m.type==='adjustment'?'جرد':'تحويل'}</span></td><td style="font-weight:700;color:${m.quantity>0?'var(--success)':'var(--error)'}" data-sort="${m.quantity}">${m.quantity>0?'+':''}${m.quantity}</td><td data-sort="${m.invoiceNumber||m.note||'-'}">${m.invoiceNumber||m.note||'-'}</td></tr>`).join('')}
         </tbody></table></div></div>`;
+    enableTableSort('movementsTable');
 }
 
 function filterMovements() {
@@ -2734,9 +3708,90 @@ function renderReturns(area) {
             <div class="stat-card"><div class="label">مرتجعات الشراء</div><div class="value" style="color:var(--success)">${fmt(totalPurRet)}</div><div class="subtitle">${purReturns.length} مرتجع</div></div>
         </div>
         ${allReturns.length===0?'<div style="text-align:center;padding:40px;color:var(--text-secondary)"><span class="material-icons-round" style="font-size:48px">inbox</span><p style="margin-top:8px">لا توجد مرتجعات</p></div>':
-        `<div class="section-card"><div class="table-container"><table><thead><tr><th>رقم</th><th>النوع</th><th>${saleReturns.length>0?'العميل':'المورد'}</th><th>الإجمالي</th><th>التاريخ</th></tr></thead><tbody>
-        ${allReturns.slice(0,50).map(i => `<tr style="cursor:pointer" onclick="editInvoice('${i.id}')"><td><strong>${i.invoiceNumber}</strong></td><td><span class="badge ${i.type==='sale'?'badge-danger':'badge-success'}">${i.type==='sale'?'بيع':'شراء'}</span></td><td>${i.customerName||'-'}</td><td style="font-weight:700;color:var(--error)">${fmt(-Math.abs(i.total))}</td><td>${fmtDate(i.createdAt)}</td></tr>`).join('')}
-        </tbody></table></div>`}`;
+        `<div class="section-card"><div class="table-container"><table id="returnsTable"><thead><tr><th data-sortkey="num" data-sorttype="num" style="cursor:pointer">رقم</th><th data-sortkey="type" data-sorttype="str" style="cursor:pointer">النوع</th><th data-sortkey="party" data-sorttype="str" style="cursor:pointer">${saleReturns.length>0?'العميل':'المورد'}</th><th data-sortkey="total" data-sorttype="num" style="text-align:left;cursor:pointer">الإجمالي</th><th data-sortkey="date" data-sorttype="date" style="cursor:pointer">التاريخ</th></tr></thead><tbody>
+        ${allReturns.slice(0,50).map(i => `<tr style="cursor:pointer" onclick="editInvoice('${i.id}')"><td data-sort="${i.invoiceNumber}"><strong>${i.invoiceNumber}</strong></td><td data-sort="${i.type}"><span class="badge ${i.type==='sale'?'badge-danger':'badge-success'}">${i.type==='sale'?'بيع':'شراء'}</span></td><td data-sort="${i.customerName||'-'}">${i.customerName||'-'}</td><td style="font-weight:700;color:var(--error)" data-sort="${-Math.abs(i.total)}">${fmt(-Math.abs(i.total))}</td><td data-sort="${i.createdAt}">${fmtDate(i.createdAt)}</td></tr>`).join('')}
+         </tbody></table></div>`}`;
+    enableTableSort('returnsTable');
+}
+
+function renderInvoices(area) {
+    window._invCache = window._invCache || {};
+    const invoices = DB.get('invoices').filter(i => i.type === 'sale').sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+    invoices.forEach(i => { window._invCache[i.id] = i; });
+    area.innerHTML = `
+        <div style="display:flex;align-items:center;gap:6px;margin-bottom:10px">
+            <button class="btn btn-sm btn-outline" onclick="showScreen('dashboard')"><span class="material-icons-round" style="font-size:16px">arrow_forward</span></button>
+            <h2 style="font-size:16px;font-weight:800"><span class="material-icons-round" style="vertical-align:middle;color:var(--primary);font-size:18px">receipt_long</span> المبيعات</h2>
+        </div>
+        <div style="margin-bottom:10px"><input class="form-control" id="invSearch" placeholder="بحث برقم الفاتورة أو العميل..." oninput="filterInvoices()"></div>
+        <div class="section-card"><div class="table-container"><table id="invoicesTable"><thead><tr>
+            <th data-sortkey="num" data-sorttype="num" style="cursor:pointer">رقم</th>
+            <th data-sortkey="party" data-sorttype="str" style="cursor:pointer">العميل</th>
+            <th data-sortkey="total" data-sorttype="num" style="text-align:left;cursor:pointer">الإجمالي</th>
+            <th data-sortkey="paid" data-sorttype="num" style="text-align:left;cursor:pointer">المدفوع</th>
+            <th data-sortkey="rem" data-sorttype="num" style="text-align:left;cursor:pointer">المتبقي</th>
+            <th data-sortkey="status" data-sorttype="str" style="cursor:pointer">الحالة</th>
+            <th data-sortkey="date" data-sorttype="date" style="cursor:pointer">التاريخ</th>
+            <th>إجراءات</th>
+        </tr></thead><tbody id="invoicesBody">
+        ${invoices.map(i => `<tr data-search="${(i.invoiceNumber || '') + ' ' + (i.customerName || '')}">
+            <td data-sort="${i.invoiceNumber}"><strong>${i.invoiceNumber}</strong>${i.isReturn ? ' <span class="badge badge-danger" style="font-size:9px">مرتجع</span>' : ''}</td>
+            <td data-sort="${i.customerName || 'نقدي'}">${i.customerName || 'نقدي'}</td>
+            <td style="font-weight:700" data-sort="${i.total}">${fmt(i.total)}</td>
+            <td data-sort="${i.paidAmount || 0}">${fmt(i.paidAmount || 0)}</td>
+            <td data-sort="${i.remainingAmount || 0}" style="color:${i.remainingAmount > 0 ? 'var(--error)' : 'inherit'}">${fmt(i.remainingAmount || 0)}</td>
+            <td data-sort="${i.status}"><span class="badge ${i.status === 'paid' ? 'badge-success' : (i.status === 'pending' ? 'badge-danger' : 'badge-warning')}">${i.status === 'paid' ? 'مدفوع' : (i.status === 'pending' ? 'آجل' : 'جزئي')}</span></td>
+            <td data-sort="${i.createdAt}">${fmtDate(i.createdAt)}</td>
+            <td style="white-space:nowrap">
+                <button class="btn btn-xs btn-outline" onclick="viewInvoice('${i.id}')"><span class="material-icons-round" style="font-size:14px">visibility</span></button>
+                <button class="btn btn-xs btn-primary" onclick="printReceipt(window._invCache['${i.id}'])"><span class="material-icons-round" style="font-size:14px">print</span></button>
+                <button class="btn btn-xs btn-success" onclick="shareInvoiceWhatsapp('${i.id}')"><span class="material-icons-round" style="font-size:14px">share</span></button>
+                <button class="btn btn-xs btn-outline" onclick="processReturn('${i.id}')"><span class="material-icons-round" style="font-size:14px">undo</span></button>
+                <button class="btn btn-xs btn-danger" onclick="confirmModal('حذف الفاتورة؟', ()=>deleteInvoice('${i.id}'))"><span class="material-icons-round" style="font-size:14px">delete</span></button>
+            </td>
+        </tr>`).join('')}
+        </tbody></table></div>`;
+    enableTableSort('invoicesTable');
+}
+
+function filterInvoices() {
+    const q = (document.getElementById('invSearch') ? document.getElementById('invSearch').value : '').trim().toLowerCase();
+    document.querySelectorAll('#invoicesBody tr').forEach(tr => {
+        const s = (tr.dataset.search || '').toLowerCase();
+        tr.style.display = (!q || s.indexOf(q) !== -1) ? '' : 'none';
+    });
+}
+
+function filterInvoiceList(prefix) {
+    const q = (document.getElementById(prefix + 'Search') ? document.getElementById(prefix + 'Search').value : '').trim().toLowerCase();
+    const st = (document.getElementById(prefix + 'Status') ? document.getElementById(prefix + 'Status').value : 'all');
+    let sum = 0;
+    document.querySelectorAll('#' + prefix + 'TableBody tr').forEach(tr => {
+        const s = (tr.dataset.search || '').toLowerCase();
+        const status = tr.dataset.status || '';
+        const okQ = !q || s.indexOf(q) !== -1;
+        const okS = st === 'all' || status === st;
+        tr.style.display = (okQ && okS) ? '' : 'none';
+        if (okQ && okS) sum += parseFloat(tr.dataset.total || 0);
+    });
+    const el = document.getElementById(prefix + 'FilteredTotal');
+    if (el) el.textContent = fmt(sum);
+}
+
+function viewInvoice(id) {
+    const inv = DB.get('invoices').find(i => i.id === id);
+    if (!inv) return;
+    const items = (inv.items || []).map(it => `<div style="display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid var(--border);font-size:13px"><span>${it.productName} × ${it.quantity}</span><span>${fmt((it.unitPrice * it.quantity) - (it.discount || 0))}</span></div>`).join('');
+    openModal('فاتورة #' + inv.invoiceNumber, `
+        <div style="font-size:13px">
+            <div style="color:var(--text-secondary);margin-bottom:6px">${inv.customerName || 'نقدي'} | ${fmtDateTime(inv.createdAt)}</div>
+            ${items}
+            <div style="display:flex;justify-content:space-between;padding:6px 0;font-size:13px"><span>المجموع الفرعي</span><strong>${fmt(inv.subtotal || inv.total)}</strong></div>
+            ${inv.discount > 0 ? `<div style="display:flex;justify-content:space-between;padding:6px 0;font-size:13px"><span>الخصم</span><strong style="color:var(--error)">${fmt(inv.discount)}</strong></div>` : ''}
+            ${inv.taxAmount > 0 ? `<div style="display:flex;justify-content:space-between;padding:6px 0;font-size:13px"><span>الضريبة</span><strong>${fmt(inv.taxAmount)}</strong></div>` : ''}
+            <div style="display:flex;justify-content:space-between;padding:8px 0;border-top:1px solid var(--border);font-size:15px"><span>الإجمالي</span><strong>${fmt(inv.total || 0)}</strong></div>
+        </div>
+    `, `<button class="btn btn-primary" onclick="printReceipt(window._invCache['${inv.id}']);closeModal()"><span class="material-icons-round">print</span> طباعة</button><button class="btn btn-success" onclick="shareInvoiceWhatsapp('${inv.id}');closeModal()"><span class="material-icons-round">share</span> واتساب</button><button class="btn btn-outline" onclick="closeModal()">إغلاق</button>`);
 }
 
 function processReturn(invoiceId) {
@@ -2809,7 +3864,7 @@ function confirmReturn(invoiceId, invoiceType) {
         } else {
             const suppliers = DB.get('suppliers');
             const s = suppliers.find(x => x.id === inv.customerId);
-            if (s) { s.balance = (s.balance || 0) + returnTotal; DB.set('suppliers', suppliers); }
+            if (s) { s.balance = (s.balance || 0) - returnTotal; DB.set('suppliers', suppliers); }
         }
     }
     closeModal();
@@ -2950,19 +4005,46 @@ function renderSettings(area) {
         <div class="settings-section"><h3>بيانات النشاط</h3><div class="settings-card">
             <div class="settings-item"><div><div class="item-label">اسم النشاط</div></div><input class="form-control" style="width:100%" value="${s.companyName||''}" onchange="updateSetting('companyName',this.value)"></div>
             <div class="settings-item"><div><div class="item-label">اسم المحل</div></div><input class="form-control" style="width:100%" value="${s.storeName||''}" onchange="updateSetting('storeName',this.value)"></div>
+            <div class="settings-item"><div><div class="item-label">لوجو المحل</div><div class="item-sublabel">يظهر في إيصالات الطباعة</div></div>
+                <div style="display:flex;align-items:center;gap:8px;width:100%">
+                    ${s.storeLogo?`<div style="width:48px;height:48px;border-radius:8px;border:1px solid var(--border);overflow:hidden;flex-shrink:0"><img src="${s.storeLogo}" style="width:100%;height:100%;object-fit:cover"></div>`:`<div style="width:48px;height:48px;border-radius:8px;border:1px dashed var(--border);display:flex;align-items:center;justify-content:center;flex-shrink:0;color:var(--text-muted)"><span class="material-icons-round" style="font-size:20px">image</span></div>`}
+                    <div style="flex:1"><input type="file" accept="image/*" id="storeLogoInput" style="display:none" onchange="uploadStoreLogo(this)"><button class="btn btn-sm btn-outline" onclick="document.getElementById('storeLogoInput').click()"><span class="material-icons-round" style="font-size:14px">upload</span> ${s.storeLogo?'تغيير':'رفع'} اللوجو</button>${s.storeLogo?`<button class="btn btn-sm btn-danger" style="margin-top:4px" onclick="updateSetting('storeLogo','');renderSettings(document.getElementById('contentArea'))"><span class="material-icons-round" style="font-size:14px">delete</span> حذف</button>`:''}</div>
+                </div>
+            </div>
             <div class="settings-item"><div><div class="item-label">هاتف المحل</div></div><input class="form-control" style="width:100%" value="${s.storePhone||''}" onchange="updateSetting('storePhone',this.value)"></div>
             <div class="settings-item"><div><div class="item-label">العنوان</div></div><input class="form-control" style="width:100%" value="${s.storeAddress||''}" onchange="updateSetting('storeAddress',this.value)"></div>
             <div class="settings-item"><div><div class="item-label">العملة</div></div><select class="form-control" style="width:100%" onchange="updateSetting('currency',this.value)"><option ${s.currency==='ج.م'?'selected':''}>ج.م</option><option ${s.currency==='ر.س'?'selected':''}>ر.س</option><option ${s.currency==='د.إ'?'selected':''}>د.إ</option><option ${s.currency==='$'?'selected':''}>$</option></select></div>
-            <div class="settings-item"><div><div class="item-label">نسبة الضريبة (%)</div></div><input class="form-control" style="width:100%" type="number" min="0" max="100" value="${s.taxRate||14}" onchange="const v=parseFloat(this.value);updateSetting('taxRate',isNaN(v)?14:Math.min(100,Math.max(0,v)))"></div>
         </div></div>
         <div class="settings-section"><h3>العرض</h3><div class="settings-card">
             <div class="settings-item"><div><div class="item-label">الوضع الليلي</div></div><label class="toggle"><input type="checkbox" ${s.darkMode?'checked':''} onchange="updateSetting('darkMode',this.checked);toggleTheme()"><span class="slider"></span></label></div>
-            <div class="settings-item"><div><div class="item-label">تفعيل الضريبة</div></div><label class="toggle"><input type="checkbox" ${s.enableTax!==false?'checked':''} onchange="updateSetting('enableTax',this.checked)"><span class="slider"></span></label></div>
+        </div></div>
+        <div class="settings-section"><h3>الطابعة الحرارية (بلوتوث)</h3><div class="settings-card">
+            <div class="settings-item"><div><div class="item-label">تفعيل الطباعة الحرارية</div><div class="item-sublabel">طباعة الفواتير على طابعة بلوتوث حرارية (58 أو 80مم)</div></div><label class="toggle"><input type="checkbox" ${s.bluetoothThermal?'checked':''} onchange="updateSetting('bluetoothThermal',this.checked);renderSettings(document.getElementById('contentArea'))"><span class="slider"></span></label></div>
+            ${s.bluetoothThermal?`
+            <div class="settings-item"><div><div class="item-label">عرض الورق</div><div class="item-sublabel">58مم (قديمة) أو 80مم (حديثة)</div></div><select class="form-input" style="max-width:130px" onchange="updateSetting('thermalWidth', parseInt(this.value));renderSettings(document.getElementById('contentArea'))"><option value="80" ${s.thermalWidth!==58?'selected':''}>80 ملم</option><option value="58" ${s.thermalWidth===58?'selected':''}>58 ملم</option></select></div>
+            <div class="settings-item"><div><div class="item-label">حالة الطابعة</div></div><span class="badge ${btChar?'badge-success':'badge-danger'}">${btChar?('متصلة: '+btPrinterName):'غير متصلة'}</span></div>
+            <div style="display:flex;flex-direction:column;gap:8px;padding:4px 0">
+                <button class="btn btn-sm btn-primary" onclick="connectBluetoothPrinter()"><span class="material-icons-round" style="font-size:14px">bluetooth</span> اختر الطابعة</button>
+                ${btChar?`<button class="btn btn-sm btn-outline" onclick="disconnectBluetoothPrinter()"><span class="material-icons-round" style="font-size:14px">link_off</span> قطع الاتصال</button>`:''}
+                <button class="btn btn-sm btn-outline" onclick="testThermalPrint()"><span class="material-icons-round" style="font-size:14px">print</span> طباعة تجريبية</button>
+            </div>
+            <div class="settings-item"><div><div class="item-sublabel" style="font-size:11px;color:var(--text-muted);line-height:1.6">ملاحظة: يتطلب متصفح Chrome/Edge واتصال آمن (https أو localhost). يفضّل الطابعات الصينية بشعار BLE‏ 49535343. عند التفعيل تتحول "طباعة" تلقائياً للطابعة الحرارية.</div></div></div>
+            `:''}
+        </div></div>
+        <div class="settings-section"><h3>تخصيص الإيصال</h3><div class="settings-card">
+            <div class="settings-item" style="flex-direction:column;align-items:stretch;gap:6px"><div class="item-label">رسالة الترويسة (تحت اسم المحل)</div><input class="form-control" style="width:100%" value="${s.receiptHeader||''}" onchange="updateSetting('receiptHeader',this.value)" placeholder="مثال: ✦ أهلاً وسهلاً ✦"></div>
+            <div class="settings-item" style="flex-direction:column;align-items:stretch;gap:6px"><div class="item-label">رسالة التذييل / الشكر</div><input class="form-control" style="width:100%" value="${s.receiptFooter||''}" onchange="updateSetting('receiptFooter',this.value)" placeholder="مثال: شكراً لتعاملكم معنا"></div>
+            <div class="settings-item" style="flex-direction:column;align-items:stretch;gap:6px"><div class="item-label">الرقم الضريبي</div><input class="form-control" style="width:100%" value="${s.taxNumber||''}" onchange="updateSetting('taxNumber',this.value)" placeholder="مثال: 123456789"></div>
         </div></div>
         <div class="settings-section"><h3>النسخ الاحتياطي</h3><div class="settings-card">
             <div class="settings-item"><div><div class="item-label">تصدير البيانات</div><div class="item-sublabel">حفظ نسخة احتياطية كملف JSON</div></div><button class="btn btn-sm btn-primary" onclick="exportBackup()"><span class="material-icons-round">download</span> تصدير</button></div>
             <div class="settings-item"><div><div class="item-label">استيراد البيانات</div><div class="item-sublabel">استعادة من ملف احتياطي</div></div><div><input type="file" id="importFile" accept=".json" style="display:none" onchange="importBackup(this)"><button class="btn btn-sm btn-outline" onclick="document.getElementById('importFile').click()"><span class="material-icons-round">upload</span> استيراد</button></div></div>
             <div class="settings-item"><div><div class="item-label">مسح جميع البيانات</div><div class="item-sublabel">حذف كل شيء والبدء من جديد</div></div><button class="btn btn-sm btn-danger" onclick="confirmModal('سيتم حذف جميع البيانات نهائياً! هل أنت متأكد؟',function(){localStorage.clear();location.reload()})"><span class="material-icons-round">delete_forever</span> مسح الكل</button></div>
+            <div style="height:1px;background:var(--border);margin:10px 0"></div>
+            <div class="settings-item"><div><div class="item-label">نسخ احتياطي تلقائي للتلجرام</div><div class="item-sublabel">إرسال نسخة JSON للسحابة عبر بوت التلجرام</div></div><label class="toggle"><input type="checkbox" ${s.autoBackup?'checked':''} onchange="updateSetting('autoBackup',this.checked);renderSettings(document.getElementById('contentArea'))"><span class="slider"></span></label></div>
+            <div class="settings-item" style="flex-direction:column;align-items:stretch;gap:6px"><div class="item-label">توكن البوت (Bot Token)</div><input class="form-control" style="width:100%" value="${s.tgToken||''}" onchange="updateSetting('tgToken',this.value)" placeholder="123456:ABCdefGhIjKlMnOp"></div>
+            <div class="settings-item" style="flex-direction:column;align-items:stretch;gap:6px"><div class="item-label">معرف المحادثة (Chat ID)</div><input class="form-control" style="width:100%" value="${s.tgChatId||''}" onchange="updateSetting('tgChatId',this.value)" placeholder="987654321"></div>
+            <div class="settings-item"><div><div class="item-label">إرسال النسخة الآن</div></div><button class="btn btn-sm btn-primary" onclick="telegramBackup()"><span class="material-icons-round">cloud_upload</span> إرسال للتلجرام</button></div>
         </div></div>
         <div class="settings-section"><h3>عن النظام</h3><div class="settings-card">
             <div class="settings-item"><div><div class="item-label">محاسب برو</div><div class="item-sublabel">الإصدار 2.0 - نظام ERP ونقاط البيع الشامل</div></div></div>
@@ -2971,19 +4053,60 @@ function renderSettings(area) {
 
 function updateSetting(key, value) {
     const s = DB.getOne('settings')||{}; s[key]=value; DB.setOne('settings',s); toast('تم الحفظ');
+    if (key === 'autoBackup') setupAutoBackup();
+}
+let _autoBackupTimer = null;
+function setupAutoBackup() {
+    if (_autoBackupTimer) { clearInterval(_autoBackupTimer); _autoBackupTimer = null; }
+    const s = DB.getOne('settings') || {};
+    if (s.autoBackup) {
+        _autoBackupTimer = setInterval(() => { const ss = DB.getOne('settings')||{}; if (ss.autoBackup) telegramBackup(); }, 5*60*1000);
+        setTimeout(() => { const ss = DB.getOne('settings')||{}; if (ss.autoBackup) telegramBackup(); }, 8000);
+    }
 }
 
-function exportBackup() {
+function uploadStoreLogo(input) {
+    const file = input.files[0];
+    if (!file) return;
+    if (file.size > 500 * 1024) { toast('الصورة كبيرة جداً (الحد الأقصى 500KB)', 'error'); return; }
+    const reader = new FileReader();
+    reader.onload = (e) => {
+        updateSetting('storeLogo', e.target.result);
+        renderSettings(document.getElementById('contentArea'));
+        toast('تم رفع اللوجو');
+    };
+    reader.readAsDataURL(file);
+}
+
+function buildBackupJSON() {
     const data = {};
-    const allKeys = ['products','customers','suppliers','warehouses','expenses','invoices','movements','users','settings','categories','heldInvoices','heldPurchases','inventoryCounts','trash','profile','seeded'];
+    const allKeys = ['products','customers','suppliers','warehouses','expenses','invoices','movements','users','settings','categories','units','heldInvoices','heldPurchases','inventoryCounts','trash','profile','seeded','quotes'];
     allKeys.forEach(k => {
         const v = DB.getOne(k);
         if (v !== undefined && v !== null) data[k] = v;
         else { const arr = DB.get(k); if (arr && arr.length > 0) data[k] = arr; }
     });
-    const blob = new Blob([JSON.stringify(data,null,2)],{type:'application/json'});
+    return JSON.stringify(data, null, 2);
+}
+function exportBackup() {
+    const blob = new Blob([buildBackupJSON()], {type:'application/json'});
     const a = document.createElement('a'); a.href=URL.createObjectURL(blob); a.download=`backup-${todayStr()}.json`; a.click();
     toast('تم التصدير بنجاح');
+}
+async function telegramBackup() {
+    const s = DB.getOne('settings') || {};
+    if (!s.tgToken || !s.tgChatId) { toast('ادخل بيانات التلجرام (التوكن ومعرف المحادثة) في الإعدادات', 'error'); return false; }
+    const blob = new Blob([buildBackupJSON()], {type:'application/json'});
+    const fd = new FormData();
+    fd.append('chat_id', s.tgChatId);
+    fd.append('document', blob, `backup-${todayStr()}.json`);
+    fd.append('caption', 'محاسب برو - نسخة احتياطية');
+    try {
+        const r = await fetch('https://api.telegram.org/bot' + s.tgToken + '/sendDocument', { method:'POST', body: fd });
+        const j = await r.json();
+        if (j && j.ok) { toast('تم النسخ الاحتياطي للتلجرام', 'success'); return true; }
+        toast('فشل النسخ: ' + (j && j.description ? j.description : ''), 'error'); return false;
+    } catch (e) { toast('تعذر الاتصال بالتلجرام', 'error'); return false; }
 }
 
 function importBackup(input) {
@@ -2992,7 +4115,7 @@ function importBackup(input) {
     reader.onload = (e) => {
         try {
             const data = JSON.parse(e.target.result);
-            const allKeys = ['products','customers','suppliers','warehouses','expenses','invoices','movements','users','settings','categories','heldInvoices','heldPurchases','inventoryCounts','trash','profile','seeded'];
+            const allKeys = ['products','customers','suppliers','warehouses','expenses','invoices','movements','users','settings','categories','units','heldInvoices','heldPurchases','inventoryCounts','trash','profile','seeded','quotes'];
             allKeys.forEach(k => localStorage.removeItem('erp_'+k));
             Object.keys(data).forEach(k => { if(Array.isArray(data[k])) DB.set(k,data[k]); else DB.setOne(k,data[k]); });
             toast('تم الاستيراد بنجاح'); location.reload();
@@ -3002,6 +4125,9 @@ function importBackup(input) {
 }
 
 // ==================== INIT ====================
+// Auto-restore backup if data is missing
+DB._restoreBackup();
+
 seedData();
 
 // Ensure warehouses exist
@@ -3025,7 +4151,378 @@ let prodsChanged = false;
 prods.forEach(p => { if (!p.warehouseId) { p.warehouseId = 'wh1'; prodsChanged = true; } });
 if (prodsChanged) DB.set('products', prods);
 
+// Ensure default "بدون تصنيف" category exists
+const catsInit = DB.get('categories');
+if (!catsInit.find(c => c.name === 'بدون تصنيف')) { catsInit.push({ id:uid(), name:'بدون تصنيف' }); DB.set('categories', catsInit); }
+const uncat = DB.get('categories').find(c => c.name === 'بدون تصنيف');
+prods.forEach(p => { if (!p.categoryId) { p.categoryId = uncat.id; prodsChanged = true; } });
+if (prodsChanged) DB.set('products', prods);
+
+// One-time cleanup: keep only "بدون تصنيف" and reassign its products
+if (!DB.getOne('mig_clean_categories')) {
+    const allCats = DB.get('categories');
+    if (allCats.length > 1 && uncat) {
+        DB.set('categories', [uncat]);
+        const ps = DB.get('products');
+        let changed = false;
+        ps.forEach(p => { if (p.categoryId !== uncat.id) { p.categoryId = uncat.id; changed = true; } });
+        if (changed) DB.set('products', ps);
+    }
+    DB.setOne('mig_clean_categories', true);
+}
+
+setupAutoBackup();
+
+// ==================== BLUETOOTH THERMAL PRINTER (58mm ESC/POS) ====================
+let btDevice = null, btChar = null, btServer = null, btPrinterName = '';
+const BT_SERVICE = '49535343-fe7d-4ae5-8fa9-9fafd205e455';
+const BT_CHAR = '49535343-8841-43f4-a8d4-ecbe34729bb8';
+const BT_SERVICES = [
+    '49535343-fe7d-4ae5-8fa9-9fafd205e455',
+    '0000ff00-0000-1000-8000-00805f9b34fb',
+    '0000ffe0-0000-1000-8000-00805f9b34fb',
+    'e7810a5d-dcaf-31c3-94bb-1a3b8cd83698',
+    '000018f0-0000-1000-8000-00805f9b34fb',
+    '00001810-0000-1000-8000-00805f9b34fb',
+    '0000fee0-0000-1000-8000-00805f9b34fb'
+];
+const BT_CHARS = [
+    '49535343-8841-43f4-a8d4-ecbe34729bb8',
+    '49535343-1fb2-4ed1-9a36-cccf0a1f59be',
+    '49535343-4c8a-39b3-2f49-511cff07cf81',
+    '0000ff01-0000-1000-8000-00805f9b34fb',
+    '0000ff02-0000-1000-8000-00805f9b34fb',
+    '0000ff03-0000-1000-8000-00805f9b34fb',
+    '0000ffe1-0000-1000-8000-00805f9b34fb',
+    '0000ffe2-0000-1000-8000-00805f9b34fb',
+    'e7810a5e-dcaf-31c3-94bb-1a3b8cd83698',
+    '0000fee1-0000-1000-8000-00805f9b34fb'
+];
+
+function isThermalOn() { const s = DB.getOne('settings') || {}; return s.bluetoothThermal === true && !!btChar; }
+
+function renderSettingsIfOpen() {
+    const a = document.getElementById('contentArea');
+    if (a && a.innerHTML.indexOf('الطابعة الحرارية') !== -1) renderSettings(a);
+}
+
+async function connectBluetoothPrinter() {
+    if (!('bluetooth' in navigator)) { toast('المتصفح لا يدعم البلوتوث (استخدم Chrome/Edge)', 'error'); return; }
+    const opts = { acceptAllDevices: true, optionalServices: BT_SERVICES };
+    try {
+        toast('اختر الطابعة من القائمة...');
+        const device = await navigator.bluetooth.requestDevice(opts);
+        await finishBtConnect(device);
+    } catch (e) {
+        if (e && e.name === 'NotFoundError') toast('لم يتم اختيار طابعة', 'error');
+        else toast('تعذر التوصيل: ' + (e.message || e.name || ''), 'error');
+    }
+}
+
+async function finishBtConnect(device) {
+    const server = await device.gatt.connect();
+    let char = null;
+    const findChar = async (sv) => {
+        for (const ch of BT_CHARS) {
+            try { const c = await sv.getCharacteristic(ch); if (c) return c; } catch (e) {}
+        }
+        try {
+            const all = await sv.getCharacteristics();
+            let best = null;
+            for (const c of all) {
+                const p = c.properties || {};
+                if (p.writeWithoutResponse) { best = c; break; }
+                if (p.write && !best) best = c;
+            }
+            if (best) return best;
+        } catch (e) {}
+        return null;
+    };
+    for (const s of BT_SERVICES) {
+        try {
+            const sv = await server.getPrimaryService(s);
+            const c = await findChar(sv);
+            if (c) { char = c; break; }
+        } catch (e) {}
+    }
+    if (!char) {
+        try {
+            const services = await server.getPrimaryServices();
+            console.log('[BT] services found:', services.map(s => s.uuid));
+            for (const sv of services) {
+                try {
+                    const c = await findChar(sv);
+                    if (c) { char = c; break; }
+                } catch (e) {}
+            }
+        } catch (e) { console.log('[BT] getPrimaryServices failed:', e); }
+    }
+    if (!char) {
+        try { await device.gatt.disconnect(); } catch (e) {}
+        btChar = null;
+        toast('الطابعة غير مدعومة (لم يُعثر على خاصية كتابة). قد تكون بلوتوث كلاسيك SPP ولا تدعم المتصفح الطباعة عليها', 'error');
+        return;
+    }
+    btDevice = device; btServer = server; btChar = char; btPrinterName = device.name || 'طابعة';
+    const s = DB.getOne('settings') || {}; s.btPrinterName = btPrinterName; DB.setOne('settings', s);
+    device.addEventListener('gattserverdisconnected', () => { btChar = null; toast('انقطع اتصال الطابعة'); renderSettingsIfOpen(); });
+    toast('تم التوصيل: ' + btPrinterName);
+    renderSettingsIfOpen();
+}
+
+async function ensureBtPrinter() {
+    if (btChar) return true;
+    if (!('bluetooth' in navigator)) return false;
+    const opts = { acceptAllDevices: true, optionalServices: BT_SERVICES };
+    try {
+        const device = await navigator.bluetooth.requestDevice(opts);
+        await finishBtConnect(device);
+        return true;
+    } catch (e) { return false; }
+}
+
+function disconnectBluetoothPrinter() {
+    if (btDevice && btDevice.gatt && btDevice.gatt.connected) btDevice.gatt.disconnect();
+    btChar = null; btDevice = null; toast('تم قطع الاتصال');
+}
+
+async function sendBtData(bytes) {
+    if (!btChar) throw new Error('no printer');
+    let mtu = 20;
+    try { if (btServer && btServer.mtu) mtu = btServer.mtu; } catch (e) {}
+    const CHUNK = Math.max(1, mtu - 3);
+    const useNoResponse = () => {
+        try { return !!(btChar.properties && btChar.properties.writeWithoutResponse); } catch (e) { return false; }
+    };
+    if (useNoResponse()) {
+        let i = 0;
+        const nextChunk = () => {
+            if (i >= bytes.length) return null;
+            const s = i; i += CHUNK;
+            return bytes.subarray(s, Math.min(s + CHUNK, bytes.length));
+        };
+        const CONC = 8;
+        const worker = async () => {
+            let sl;
+            while ((sl = nextChunk())) {
+                try { await btChar.writeValue(sl); }
+                catch (e) { try { await btChar.writeValueWithResponse(sl); } catch (e2) {} }
+            }
+        };
+        await Promise.all(Array.from({ length: CONC }, worker));
+    } else {
+        for (let i = 0; i < bytes.length; i += CHUNK) {
+            const sl = bytes.subarray(i, Math.min(i + CHUNK, bytes.length));
+            try { await btChar.writeValueWithResponse(sl); } catch (e) {}
+        }
+    }
+}
+
+function canvasToEscPos(canvas) {
+    const width = canvas.width;
+    const height = canvas.height;
+    const img = canvas.getContext('2d').getImageData(0, 0, width, height).data;
+    const bytesPerRow = Math.ceil(width / 8);
+    const h = Math.ceil(height / 8) * 8;
+    const cmds = [0x1B, 0x40];
+    cmds.push(0x1D, 0x76, 0x30, 0x00,
+        width & 0xFF, (width >> 8) & 0xFF,
+        h & 0xFF, (h >> 8) & 0xFF);
+    for (let y = 0; y < h; y++) {
+        for (let x = 0; x < bytesPerRow; x++) {
+            let b = 0;
+            for (let bi = 0; bi < 8; bi++) {
+                const xx = x * 8 + bi;
+                let bit = 0;
+                if (xx < width && y < height) {
+                    const idx = (y * width + xx) * 4;
+                    const a = img[idx + 3];
+                    const lum = img[idx] * 0.299 + img[idx + 1] * 0.587 + img[idx + 2] * 0.114;
+                    bit = (a < 128 || lum > 140) ? 0 : 1;
+                }
+                b |= (bit << (7 - bi));
+            }
+            cmds.push(b);
+        }
+    }
+    cmds.push(0x0A, 0x0A, 0x0A, 0x1D, 0x56, 0x00);
+    return new Uint8Array(cmds);
+}
+
+async function drawReceiptCanvas(inv, type) {
+    const st = DB.getOne('settings') || {};
+    const W = (st.thermalWidth === 58) ? 384 : 576;
+    try { if (document.fonts && document.fonts.ready) await document.fonts.ready; } catch (e) {}
+    const tmp = document.createElement('canvas'); tmp.width = W; tmp.height = 4600;
+    const ctx = tmp.getContext('2d');
+    ctx.direction = 'rtl';
+    ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, W, 4600);
+    let y = 8; const pad = 10;
+    function txt(str, x, align, font, color) {
+        ctx.fillStyle = color || '#000'; ctx.font = font || '16px Cairo, Tahoma, Arial, "Noto Sans Arabic", sans-serif';
+        ctx.textAlign = align || 'right'; ctx.textBaseline = 'top'; ctx.fillText(str, x, y);
+    }
+    function divider() {
+        ctx.strokeStyle = '#999'; ctx.lineWidth = 1;
+        ctx.beginPath(); ctx.moveTo(pad, y + 6); ctx.lineTo(W - pad, y + 6); ctx.stroke(); y += 14;
+    }
+    if (st.storeLogo) {
+        try {
+            const im = await new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = rej; i.src = st.storeLogo; });
+            const lw = 56, lh = 56; ctx.drawImage(im, W / 2 - lw / 2, y, lw, lh); y += lh + 6;
+        } catch (e) {}
+    } else {
+        const letter = (st.storeName || st.companyName || 'م')[0];
+        ctx.fillStyle = '#2563EB'; ctx.beginPath(); ctx.arc(W / 2, y + 22, 22, 0, Math.PI * 2); ctx.fill();
+        ctx.fillStyle = '#fff'; ctx.font = 'bold 24px Cairo, Tahoma, Arial, "Noto Sans Arabic", sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+        ctx.fillText(letter, W / 2, y + 23); ctx.textAlign = 'right'; ctx.textBaseline = 'top'; y += 50;
+    }
+    ctx.textAlign = 'center'; ctx.fillStyle = '#000'; ctx.font = 'bold 17px Cairo, Tahoma, Arial, "Noto Sans Arabic", sans-serif';
+    ctx.fillText(st.storeName || st.companyName || 'المحل', W / 2, y); y += 23;
+    ctx.font = '10px Cairo, Tahoma, Arial, "Noto Sans Arabic", sans-serif'; ctx.fillStyle = '#555';
+    if (st.storePhone) { ctx.fillText(st.storePhone, W / 2, y); y += 14; }
+    if (st.storeAddress) { ctx.fillText(st.storeAddress, W / 2, y); y += 14; }
+    if (st.receiptHeader) { ctx.fillText(st.receiptHeader, W / 2, y); y += 14; }
+    ctx.textAlign = 'right'; ctx.fillStyle = '#000'; y += 4;
+    divider();
+    ctx.font = 'bold 15px Cairo, Tahoma, Arial, "Noto Sans Arabic", sans-serif'; ctx.textAlign = 'center';
+    ctx.fillText(type === 'sale' ? 'فاتورة مبيعات' : 'فاتورة مشتريات', W / 2, y); y += 20;
+    ctx.textAlign = 'right'; ctx.font = '11px Cairo, Tahoma, Arial, "Noto Sans Arabic", sans-serif'; ctx.fillStyle = '#333';
+    txt('رقم الفاتورة: #' + (inv.invoiceNumber || ''), W - pad, 'right', '12px Cairo, Tahoma, Arial, "Noto Sans Arabic", sans-serif'); y += 16;
+    txt('التاريخ: ' + (inv.createdAt ? fmtDateTime(inv.createdAt) : ''), W - pad, 'right', '11px Cairo, Tahoma, Arial, "Noto Sans Arabic", sans-serif'); y += 16;
+    const party = type === 'sale' ? (inv.customerName || 'نقدي') : (inv.customerName || '-');
+    txt((type === 'sale' ? 'العميل: ' : 'المورد: ') + party, W - pad, 'right', '11px Cairo, Tahoma, Arial, "Noto Sans Arabic", sans-serif'); y += 16;
+    divider();
+    ctx.font = '12px Cairo, Tahoma, Arial, "Noto Sans Arabic", sans-serif';
+    (inv.items || []).forEach(it => {
+        const name = it.productName || '';
+        const lineTotal = (it.unitPrice * it.quantity - (it.discount || 0));
+        txt(name, W - pad, 'right', '12px Cairo, Tahoma, Arial, "Noto Sans Arabic", sans-serif');
+        txt(fmt(lineTotal), pad, 'left', '12px Cairo, Tahoma, Arial, "Noto Sans Arabic", sans-serif'); y += 16;
+        ctx.font = '10px Cairo, Tahoma, Arial, "Noto Sans Arabic", sans-serif'; ctx.fillStyle = '#777';
+        txt(it.quantity + ' × ' + fmt(it.unitPrice) + (it.discount > 0 ? ('  خصم -' + fmt(it.discount)) : ''), W - pad, 'right', '10px Cairo, Tahoma, Arial, "Noto Sans Arabic", sans-serif');
+        ctx.fillStyle = '#333'; ctx.font = '12px Cairo, Tahoma, Arial, "Noto Sans Arabic", sans-serif'; y += 14;
+    });
+    divider();
+    function tline(label, val, big, color) {
+        const f = big ? 'bold 14px Cairo, Tahoma, Arial, "Noto Sans Arabic", sans-serif' : '12px Cairo, Tahoma, Arial, "Noto Sans Arabic", sans-serif';
+        ctx.font = f; ctx.fillStyle = color || '#000';
+        txt(label, W - pad, 'right', f);
+        txt(fmt(val), pad, 'left', f); y += (big ? 20 : 16);
+    }
+    tline('المجموع الفرعي', inv.subtotal || inv.total);
+    if (inv.discount > 0) tline('الخصم', -inv.discount, false, '#EF4444');
+    if (inv.taxAmount > 0) tline('الضريبة', inv.taxAmount);
+    tline('الإجمالي', inv.total || 0, true);
+    if (inv.paidAmount != null && inv.paidAmount !== undefined) tline('المدفوع', inv.paidAmount);
+    if (inv.remainingAmount > 0) tline('المتبقي', inv.remainingAmount, false, '#EF4444');
+    divider();
+    ctx.textAlign = 'center'; ctx.fillStyle = '#555'; ctx.font = '11px Cairo, Tahoma, Arial, "Noto Sans Arabic", sans-serif';
+    if (st.taxNumber) { ctx.fillText('الرقم الضريبي: ' + st.taxNumber, W / 2, y); y += 15; }
+    if (st.receiptFooter) { ctx.fillText(st.receiptFooter, W / 2, y); y += 15; }
+    else { ctx.fillText('شكراً لتعاملكم معنا', W / 2, y); y += 15; }
+    ctx.fillText(st.storeName || '', W / 2, y); y += 18;
+    const out = document.createElement('canvas'); out.width = W; out.height = y + 6;
+    out.getContext('2d').drawImage(tmp, 0, 0);
+    return out;
+}
+
+async function printThermalReceipt(inv, type, fallback) {
+    if (!btChar && !(await ensureBtPrinter())) { if (fallback) fallback(); return; }
+    try {
+        const canvas = await drawReceiptCanvas(inv, type);
+        const bytes = canvasToEscPos(canvas);
+        await sendBtData(bytes);
+        toast('تم الإرسال للطابعة');
+    } catch (e) {
+        btChar = null;
+        toast('تعذر الطباعة الحرارية: ' + (e.message || e.name || '') + ' — استخدم الطباعة العادية', 'error');
+        if (fallback) fallback();
+    }
+}
+
+function testThermalPrint() {
+    const inv = {
+        invoiceNumber: '١', createdAt: new Date().toISOString(), customerName: 'عميل نقدي',
+        items: [
+            { productName: 'صنف تجريبي أ', quantity: 2, unitPrice: 15, discount: 0 },
+            { productName: 'صنف تجريبي ب', quantity: 1, unitPrice: 25, discount: 5 }
+        ],
+        subtotal: 50, discount: 5, taxAmount: 0, total: 50, paidAmount: 50, remainingAmount: 0
+    };
+    printThermalReceipt(inv, 'sale');
+}
+
+// ==================== GENERIC TABLE SORTING ====================
+let _sortState = {};
+function enableTableSort(tableId) {
+    const table = document.getElementById(tableId);
+    if (!table) return;
+    const headers = table.querySelectorAll('thead th');
+    headers.forEach((th, idx) => {
+        if (!th.dataset.sortkey) return;
+        th.style.cursor = 'pointer'; th.style.userSelect = 'none';
+        if (th._sortBound) return;
+        th._sortBound = true;
+        th.addEventListener('click', () => {
+            const key = th.dataset.sortkey, type = th.dataset.sorttype || 'str';
+            const cur = _sortState[tableId];
+            let dir = 'asc';
+            if (cur && cur.key === key) dir = cur.dir === 'asc' ? 'desc' : 'asc';
+            _sortState[tableId] = { key, dir };
+            sortTableRows(table, idx, type, dir);
+            updateSortArrows(table, headers, idx, dir);
+        });
+    });
+    const cur = _sortState[tableId];
+    if (cur) {
+        const idx = Array.from(headers).findIndex(h => h.dataset.sortkey === cur.key);
+        if (idx >= 0) { sortTableRows(table, idx, headers[idx].dataset.sorttype || 'str', cur.dir); updateSortArrows(table, headers, idx, cur.dir); }
+    }
+}
+function sortTableRows(table, colIdx, type, dir) {
+    const tbody = table.querySelector('tbody');
+    if (!tbody) return;
+    const rowsArr = Array.from(tbody.querySelectorAll('tr'));
+    rowsArr.sort((a, b) => {
+        const av = getCellSortVal(a, colIdx), bv = getCellSortVal(b, colIdx);
+        let r;
+        if (type === 'num') r = (parseFloat(av) || 0) - (parseFloat(bv) || 0);
+        else if (type === 'date') r = (new Date(av).getTime() || 0) - (new Date(bv).getTime() || 0);
+        else r = String(av).localeCompare(String(bv), 'ar');
+        return dir === 'asc' ? r : -r;
+    });
+    rowsArr.forEach(r => tbody.appendChild(r));
+}
+function getCellSortVal(tr, idx) {
+    const td = tr.children[idx];
+    if (!td) return '';
+    if (td.dataset.sort !== undefined) return td.dataset.sort;
+    return td.textContent.trim();
+}
+function updateSortArrows(table, headers, idx, dir) {
+    headers.forEach((th, i) => {
+        const old = th.querySelector('.sort-arrow');
+        if (old) old.remove();
+        if (i === idx && th.dataset.sortkey) {
+            const ar = document.createElement('span');
+            ar.className = 'sort-arrow'; ar.style.marginRight = '4px';
+            ar.textContent = dir === 'asc' ? '▲' : '▼';
+            th.insertBefore(ar, th.firstChild);
+        }
+    });
+}
+
 // ==================== EXPORT UTILITIES ====================
+function downloadCSV(rawCsv, filename) {
+    const blob = new Blob(['\uFEFF' + rawCsv], { type: 'text/csv;charset=utf-8;' });
+    const link = document.createElement('a');
+    link.href = URL.createObjectURL(blob);
+    link.download = filename.endsWith('.csv') ? filename : filename + '.csv';
+    link.click();
+    URL.revokeObjectURL(link.href);
+}
+
 function exportToCSV(headers, rows, filename) {
     const sep = ';';
     const csvContent = '\uFEFF' + [headers.join(sep), ...rows.map(r => r.map(c => `"${String(c).replace(/"/g,'""')}"`).join(sep))].join('\r\n');
@@ -3164,3 +4661,4 @@ if (savedTheme?.darkMode) {
 document.getElementById('sidebarUserName').textContent = currentUser.name;
 document.getElementById('sidebarUserRole').textContent = 'مدير النظام';
 showScreen('dashboard');
+

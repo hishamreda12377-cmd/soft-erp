@@ -13,6 +13,7 @@
     <link href="https://fonts.googleapis.com/css2?family=Cairo:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
     <link href="https://fonts.googleapis.com/icon?family=Material+Icons+Round" rel="stylesheet">
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+    <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
 </head>
 <body>
     <div class="app-container" id="appContainer">
@@ -32,8 +33,14 @@
                 <a class="nav-item" data-screen="pos" onclick="showScreen('pos')">
                     <span class="material-icons-round">point_of_sale</span><span>نقطة البيع</span>
                 </a>
+                <a class="nav-item" data-screen="invoices" onclick="showScreen('invoices')">
+                    <span class="material-icons-round">receipt_long</span><span>المبيعات</span>
+                </a>
                 <a class="nav-item" data-screen="purchases" onclick="showScreen('purchases')">
                     <span class="material-icons-round">shopping_cart</span><span>المشتريات</span>
+                </a>
+                <a class="nav-item" data-screen="purchaseOrders" onclick="showScreen('purchaseOrders')">
+                    <span class="material-icons-round">assignment</span><span>طلبات الشراء</span>
                 </a>
                 <div class="nav-divider"></div>
                 <div class="nav-section-label">الإدارة</div>
@@ -69,6 +76,9 @@
                 <a class="nav-item" data-screen="returns" onclick="showScreen('returns')">
                     <span class="material-icons-round">undo</span><span>المرتجعات</span>
                 </a>
+                <a class="nav-item" data-screen="quotes" onclick="showScreen('quotes')">
+                    <span class="material-icons-round">request_quote</span><span>الطلبيات</span>
+                </a>
                 <div class="nav-divider"></div>
                 <div class="nav-section-label">النظام</div>
                 <a class="nav-item" data-screen="users" onclick="showScreen('users')">
@@ -87,14 +97,9 @@
         <main class="main-content">
             <header class="top-bar">
                 <button class="menu-toggle" onclick="toggleSidebar()"><span class="material-icons-round" style="font-size:22px">menu</span></button>
-                <div style="display:flex;align-items:center;gap:8px;flex:1">
-                    <div style="width:30px;height:30px;border-radius:9px;background:var(--gradient-primary);display:flex;align-items:center;justify-content:center;box-shadow:0 2px 8px rgba(37,99,235,0.3);flex-shrink:0">
-                        <span class="material-icons-round" style="font-size:16px;color:white">account_balance_wallet</span>
-                    </div>
-                    <div style="min-width:0">
-                        <div style="font-size:13px;font-weight:800;color:#000;line-height:1.1">محاسب برو</div>
-                        <div style="font-size:9px;color:var(--text-muted);font-weight:500">نظام ERP ونقاط البيع</div>
-                    </div>
+                <div class="topbar-title">
+                    <span class="material-icons-round" style="font-size:18px;color:var(--accent)">account_balance_wallet</span>
+                    <span>محاسب برو</span>
                 </div>
                 <div class="top-bar-actions">
                     <button class="icon-btn" id="notifBtn" onclick="showNotifications()" style="position:relative">
@@ -102,9 +107,6 @@
                         <span id="notifBadge" style="display:none;position:absolute;top:3px;right:3px;background:var(--error);color:white;border-radius:50%;width:15px;height:15px;font-size:8px;display:flex;align-items:center;justify-content:center;font-weight:700;border:1.5px solid white">0</span>
                     </button>
                     <button class="icon-btn" onclick="toggleTheme()"><span class="material-icons-round" id="themeIcon" style="font-size:20px">dark_mode</span></button>
-                    <div class="user-avatar" onclick="toggleSidebar()">
-                        <span class="material-icons-round" style="font-size:17px;color:white">person</span>
-                    </div>
                 </div>
             </header>
             <div class="content-area" id="contentArea"></div>
@@ -127,6 +129,14 @@
     <script src="app.js"></script>
     <script>
         if ('serviceWorker' in navigator) { navigator.serviceWorker.register('sw.js').catch(()=>{}); }
+        document.addEventListener('click', function(e) {
+            const dropdowns = document.querySelectorAll('[id$="Dropdown"]');
+            dropdowns.forEach(dd => {
+                if (dd.style.display !== 'none' && !dd.contains(e.target) && !dd.previousElementSibling?.contains(e.target)) {
+                    dd.style.display = 'none';
+                }
+            });
+        });
     </script>
 </body>
 </html>

@@ -196,6 +196,13 @@ body {
     flex-shrink: 0;
     z-index: 100;
     box-shadow: 0 1px 3px rgba(0,0,0,0.03);
+    position: relative;
+}
+.topbar-title {
+    position: absolute; left: 50%; transform: translateX(-50%);
+    display: flex; align-items: center; gap: 6px;
+    font-size: 16px; font-weight: 800; color: var(--text);
+    pointer-events: none;
 }
 .menu-toggle {
     display: flex; align-items: center; justify-content: center;
@@ -704,6 +711,7 @@ select.form-control {
     .form-row { grid-template-columns: 1fr; }
     .quick-action { min-width: calc(50% - 4px); }
     .table-container { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+    .inventory-cards + .section-card .table-container { display: none; }
     .payment-methods { grid-template-columns: repeat(2, 1fr); }
     .inventory-cards { display: block; }
     .modal { max-width: 100%; margin: 0; border-radius: var(--radius-md) var(--radius-md) 0 0; max-height: 85vh; max-height: 85dvh; }

@@ -1,142 +1,39 @@
 <!DOCTYPE html>
 <html lang="ar" dir="rtl">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <meta name="apple-mobile-web-app-capable" content="yes">
-    <meta name="mobile-web-app-capable" content="yes">
-    <meta name="theme-color" content="#2563EB">
-    <meta name="description" content="محاسب برو - نظام ERP ونقاط البيع">
-    <link rel="manifest" href="manifest.json">
-    <title>محاسب برو - نظام ERP ونقاط البيع</title>
-    <link rel="stylesheet" href="style.css">
-    <link href="https://fonts.googleapis.com/css2?family=Cairo:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
-    <link href="https://fonts.googleapis.com/icon?family=Material+Icons+Round" rel="stylesheet">
-    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
-    <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Nexus ERP</title>
+<link rel="stylesheet" href="style.css" />
+  <link rel="manifest" href="manifest.json" />
+  <script src="vendor/qrcode.min.js" onerror="this.src='https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.min.js'"></script>
+  <script src="vendor/jspdf.umd.min.js" onerror="this.src='https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js'"></script>
 </head>
 <body>
-    <div class="app-container" id="appContainer">
-        <div class="sidebar-overlay" id="sidebarOverlay" onclick="closeSidebar()"></div>
-        <aside class="sidebar" id="sidebar">
-            <div class="sidebar-header">
-                <div class="logo">
-                    <div class="logo-icon"><span class="material-icons-round">account_balance_wallet</span></div>
-                    <div><h2>محاسب برو</h2><span class="version">v2.0 - نظام ERP ونقاط البيع</span></div>
-                </div>
-            </div>
-            <nav class="sidebar-nav">
-                <div class="nav-section-label">القائمة الرئيسية</div>
-                <a class="nav-item active" data-screen="dashboard" onclick="showScreen('dashboard')">
-                    <span class="material-icons-round">dashboard</span><span>لوحة التحكم</span>
-                </a>
-                <a class="nav-item" data-screen="pos" onclick="showScreen('pos')">
-                    <span class="material-icons-round">point_of_sale</span><span>نقطة البيع</span>
-                </a>
-                <a class="nav-item" data-screen="invoices" onclick="showScreen('invoices')">
-                    <span class="material-icons-round">receipt_long</span><span>المبيعات</span>
-                </a>
-                <a class="nav-item" data-screen="purchases" onclick="showScreen('purchases')">
-                    <span class="material-icons-round">shopping_cart</span><span>المشتريات</span>
-                </a>
-                <a class="nav-item" data-screen="purchaseOrders" onclick="showScreen('purchaseOrders')">
-                    <span class="material-icons-round">assignment</span><span>طلبات الشراء</span>
-                </a>
-                <div class="nav-divider"></div>
-                <div class="nav-section-label">الإدارة</div>
-                <a class="nav-item" data-screen="products" onclick="showScreen('products')">
-                    <span class="material-icons-round">inventory_2</span><span>الأصناف</span>
-                </a>
-                <a class="nav-item" data-screen="customers" onclick="showScreen('customers')">
-                    <span class="material-icons-round">people</span><span>العملاء</span>
-                </a>
-                <a class="nav-item" data-screen="suppliers" onclick="showScreen('suppliers')">
-                    <span class="material-icons-round">local_shipping</span><span>الموردين</span>
-                </a>
-                <a class="nav-item" data-screen="expenses" onclick="showScreen('expenses')">
-                    <span class="material-icons-round">receipt_long</span><span>المصروفات</span>
-                </a>
-                <div class="nav-divider"></div>
-                <div class="nav-section-label">المخزون والتقارير</div>
-                <a class="nav-item" data-screen="inventory" onclick="showScreen('inventory')">
-                    <span class="material-icons-round">warehouse</span><span>المخزون</span>
-                </a>
-                <a class="nav-item" data-screen="warehouses" onclick="showScreen('warehouses')">
-                    <span class="material-icons-round">domain</span><span>المخازن</span>
-                </a>
-                <a class="nav-item" data-screen="inventoryCounts" onclick="showScreen('inventoryCounts')">
-                    <span class="material-icons-round">fact_check</span><span>الجرد</span>
-                </a>
-                <a class="nav-item" data-screen="reports" onclick="showScreen('reports')">
-                    <span class="material-icons-round">bar_chart</span><span>التقارير</span>
-                </a>
-                <a class="nav-item" data-screen="movements" onclick="showScreen('movements')">
-                    <span class="material-icons-round">swap_horiz</span><span>حركة الأصناف</span>
-                </a>
-                <a class="nav-item" data-screen="returns" onclick="showScreen('returns')">
-                    <span class="material-icons-round">undo</span><span>المرتجعات</span>
-                </a>
-                <a class="nav-item" data-screen="quotes" onclick="showScreen('quotes')">
-                    <span class="material-icons-round">request_quote</span><span>الطلبيات</span>
-                </a>
-                <div class="nav-divider"></div>
-                <div class="nav-section-label">النظام</div>
-                <a class="nav-item" data-screen="users" onclick="showScreen('users')">
-                    <span class="material-icons-round">admin_panel_settings</span><span>المستخدمين</span>
-                </a>
-                <a class="nav-item" data-screen="settings" onclick="showScreen('settings')">
-                    <span class="material-icons-round">settings</span><span>الإعدادات</span>
-                </a>
-            </nav>
-            <div class="sidebar-user" id="sidebarUser">
-                <div class="user-avatar" style="width:36px;height:36px;font-size:13px;border-radius:10px;box-shadow:0 2px 8px rgba(37,99,235,0.3)"><span class="material-icons-round" style="font-size:18px;color:white">person</span></div>
-                <div><div id="sidebarUserName" style="font-weight:700;font-size:12px">المدير</div><div class="role" id="sidebarUserRole">مدير النظام</div></div>
-            </div>
-        </aside>
+<!-- ===== App Lock ===== -->
+<div id="lockOverlay" class="login-overlay hidden">
+  <div class="login-card">
+    <div class="login-logo">Nexus<span>ERP</span></div>
+    <div class="login-sub" id="lockSub">الرجاء إدخال رمز القفل</div>
+    <input id="lockPin" type="password" inputmode="numeric" placeholder="••••" style="width:100%;padding:10px;border:1px solid var(--border);border-radius:10px;background:var(--panel-2);color:var(--text);text-align:center;font-size:18px;letter-spacing:6px" />
+    <button class="btn btn-primary btn-block" style="margin-top:12px" onclick="submitLock()">فتح</button>
+    <div id="lockError" class="login-error"></div>
+  </div>
+</div>
 
-        <main class="main-content">
-            <header class="top-bar">
-                <button class="menu-toggle" onclick="toggleSidebar()"><span class="material-icons-round" style="font-size:22px">menu</span></button>
-                <div class="topbar-title">
-                    <span class="material-icons-round" style="font-size:18px;color:var(--accent)">account_balance_wallet</span>
-                    <span>محاسب برو</span>
-                </div>
-                <div class="top-bar-actions">
-                    <button class="icon-btn" id="notifBtn" onclick="showNotifications()" style="position:relative">
-                        <span class="material-icons-round" style="font-size:20px">notifications</span>
-                        <span id="notifBadge" style="display:none;position:absolute;top:3px;right:3px;background:var(--error);color:white;border-radius:50%;width:15px;height:15px;font-size:8px;display:flex;align-items:center;justify-content:center;font-weight:700;border:1.5px solid white">0</span>
-                    </button>
-                    <button class="icon-btn" onclick="toggleTheme()"><span class="material-icons-round" id="themeIcon" style="font-size:20px">dark_mode</span></button>
-                </div>
-            </header>
-            <div class="content-area" id="contentArea"></div>
-        </main>
-    </div>
+<!-- ===== App Shell (built by renderShell in app.js) ===== -->
+<div id="app" class="app hidden"></div>
 
-    <!-- Modal -->
-    <div class="modal-overlay" id="modalOverlay" onclick="closeModal()">
-        <div class="modal" onclick="event.stopPropagation()">
-            <div class="modal-header">
-                <h3 id="modalTitle">عنوان</h3>
-                <button class="close-btn" onclick="closeModal()"><span class="material-icons-round">close</span></button>
-            </div>
-            <div class="modal-body" id="modalBody"></div>
-            <div class="modal-footer" id="modalFooter"></div>
-        </div>
-    </div>
+<!-- ===== Modals ===== -->
+<div id="modalRoot"></div>
+<div id="printRoot"></div>
+<div id="toastRoot"></div>
+<div id="offlineBar" class="offline-bar hidden">⚠️ أنت غير متصل — تعمل في وضع أوفلاين</div>
 
-    <div class="toast-container" id="toastContainer"></div>
-    <script src="app.js"></script>
-    <script>
-        if ('serviceWorker' in navigator) { navigator.serviceWorker.register('sw.js').catch(()=>{}); }
-        document.addEventListener('click', function(e) {
-            const dropdowns = document.querySelectorAll('[id$="Dropdown"]');
-            dropdowns.forEach(dd => {
-                if (dd.style.display !== 'none' && !dd.contains(e.target) && !dd.previousElementSibling?.contains(e.target)) {
-                    dd.style.display = 'none';
-                }
-            });
-        });
-    </script>
+  <script src="core-lib.js"></script>
+  <script src="app.js"></script>
+  <script src="invoice-screen.js"></script>
+  <script src="accounting-ext.js"></script>
+  <script src="accounting-core2.js"></script>
 </body>
 </html>

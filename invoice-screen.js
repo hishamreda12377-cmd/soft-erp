@@ -67,13 +67,12 @@ function renderInvoiceScreen(kind, editId){
           ${cfg.hasPrice?'<th>'+t('السعر','Price')+'</th><th>'+t('خصم','Disc')+'%</th>':''}
           <th>${t('الإجمالي','Total')}</th><th></th>
         </tr></thead><tbody id="invRows"></tbody></table>
-        <div class="inv-row-add"><button class="inv-add-btn" id="invAddBtn">＋ ${t('إضافة صنف','Add Item')} <span class="inv-kbd">Alt+N</span></button></div></div>
+        </div>
       </div>
       <div class="inv-preview" id="invPreview" style="display:none"></div>
     </div>
   </div></div>`;
   if(saved && !edit){ _invCart=saved.cart||[]; _invDisc=saved.invDisc||0; _invAttach=(saved.attachments||[]).slice(); const pid=$('#'+cfg.partyHidden); if(pid) pid.value=saved.partyId||''; const pn=$('#'+cfg.partyField); if(pn) pn.value=saved.partyName||''; }
-  $('#invAddBtn').addEventListener('click', ()=>invSearchPrompt(cfg));
   invRenderRows(); invRenderSummary(); invRenderAttach();
   invBindKeys(kind);
   applyLang();
@@ -143,13 +142,14 @@ function invValidatePost(){
   if(_invCfg.kind!=='po' && ph && !ph.value){ toast(t('اختر ','Select ')+_invCfg.partyLabel); return false; }
   return true;
 }
+function invEditDue(){ if(!_invEditId) return ''; const e = kind==='sale'?DB.get('invoices').find(x=>x.id===_invEditId):kind==='purchase'?DB.get('purchases').find(x=>x.id===_invEditId):DB.get('purchaseOrders').find(x=>x.id===_invEditId); return (e&&e.due)||''; }
 function invBuild(kind){
   const cfg=invCfg(kind); const tt=invTotals();
   const partyId=$('#'+cfg.partyHidden).value||(DB.get(cfg.partyArr)[0]&&DB.get(cfg.partyArr)[0].id)||'';
   const party=DB.get(cfg.partyArr).find(x=>x.id===partyId)||{};
   const notes=$('#invNotes')?$('#invNotes').value.trim():'';
   const date=$('#invDate').value||new Date().toISOString().slice(0,10);
-  const due=edit?(edit.due||''):'';
+  const due=_invEditId?(invEditDue()||''):'';
   const whId=$('#invWh')?$('#invWh').value:'';
   const pay=$('#invPay')?$('#invPay').value:((edit&&edit.payment)||'cash');
   const ccId=(ccs&&ccs[0])?ccs[0].id:'';

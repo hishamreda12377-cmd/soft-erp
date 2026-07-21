@@ -79,7 +79,7 @@ function deleteCostCenter(id){ confirmModal(t('حذف','Delete'), t('حذف مر
 function renderClosingScreen(){ ensurePeriods();   $('#screen').innerHTML=`<div class="screen">${pageHead(t('إقفال الفترة','Period Closing'),{icon:'🔒',sub:t('ترحيل الإيرادات والمصروفات','Post revenues & expenses')})}
   ${panel({body:`<p>${t('يقوم إقفال الفترة بترحيل أرصدة الإيرادات والمصروفات إلى حقوق الملكية (حساب الأرباح المرحلة)','Closing posts revenues & expenses to retained earnings')}</p>
   <label>${t('الفترة','Period')}<select id="closePer">${DB.get('periods').map(p=>`<option value="${p.code}">${esc(p.code)}</option>`).join('')}</select></label>
-  <button class="btn btn-primary" style="margin-top:10px" onclick="doClosePeriod()">${t('ترحيل إقفال','Post Closing')}</button>`})}
+  <button class="btn btn-primary mt-sm" onclick="doClosePeriod()">${t('ترحيل إقفال','Post Closing')}</button>`})}
   <div class="section-title">${t('قيود الإقفال السابقة','Prior Closing Entries')}</div>
   ${panel({flush:true, body:`<table class="tbl"><thead><tr><th>${t('الفترة','Period')}</th><th>${t('التاريخ','Date')}</th><th>${t('صافي الربح','Net')}</th></tr></thead><tbody>${DB.get('closings').map(c=>`<tr><td>${esc(c.period)}</td><td>${fmtDate(c.date)}</td><td>${money(c.net)}</td></tr>`).join('')}</tbody></table>`})}</div>`; applyLang(); }
 function computeBalancesForPeriod(ym){ const accounts=DB.get('accounts'); const map={}; accounts.forEach(a=>map[a.id]=0); DB.get('journal').forEach(j=>{ if(periodOf(j.date)!==ym) return; if(j.status==='draft'||j.status==='pending') return; j.lines.forEach(l=>{ map[l.accountId]=(map[l.accountId]||0)+(Number(l.debit)||0)-(Number(l.credit)||0); }); }); return map; }

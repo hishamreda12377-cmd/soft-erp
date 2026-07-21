@@ -1,0 +1,30 @@
+/* ============================================================
+   Print Styles — used by popup windows (statement, receipt)
+   ============================================================ */
+
+/* --- Statement print --- */
+.stmt-print{font-family:Tahoma,sans-serif;padding:16px}
+.stmt-print table{width:100%;border-collapse:collapse}
+.stmt-print td,.stmt-print th{border:1px solid #ccc;padding:6px;text-align:right}
+.stmt-print .stmt-head{margin-bottom:10px}
+.stmt-print .muted{color:#666;font-size:12px}
+.stmt-print .neg{color:#c0392b}
+.stmt-print .stmt-tot{font-weight:800}
+
+/* --- Receipt print (invoice + return) --- */
+@page{size:80mm auto;margin:0}
+*{box-sizing:border-box}
+.receipt{width:80mm;max-width:80mm;margin:0 auto;padding:8px 6px;font-family:"Courier New",monospace;font-size:12px;color:#000;background:#fff}
+.r-logo{text-align:center;margin-bottom:4px}
+.r-logo img{max-height:54px;max-width:170px;object-fit:contain}
+.r-title{text-align:center;margin:2px 0;font-size:15px;font-weight:800}
+.r-sub{text-align:center;font-size:11px;margin:1px 0}
+.r-row{display:flex;justify-content:space-between;margin:2px 0}
+.r-item{display:flex;justify-content:space-between;margin:2px 0}
+.r-item.r-head{font-weight:700;border-bottom:1px dotted #999;padding-bottom:2px}
+.r-total{display:flex;justify-content:space-between;font-weight:800;font-size:14px;margin:3px 0}
+.r-qr{text-align:center;margin:6px 0}
+.r-barcode{text-align:center;margin:4px 0}
+.r-barcode svg{width:160px;height:46px}
+.r-foot{margin-top:4px;border-top:1px dashed #999;padding-top:4px}
+hr{border:none;border-top:1px dashed #999;margin:6px 0}

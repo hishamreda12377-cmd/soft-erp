@@ -17,7 +17,7 @@ function renderVatScreen(){ ensureVatAccounts(); const J=DB.get('journal').filte
   <div class="kpi-grid">
     <div class="kpi"><span>${t('ضريبة المخرجات','Output VAT')}</span><b>${money(out)}</b></div>
     <div class="kpi"><span>${t('ضريبة المدخلات','Input VAT')}</span><b>${money(inp)}</b></div>
-    <div class="kpi"><span>${t('الضريبة المستحقة','VAT Payable')}</span><b style="color:${payable>=0?'green':'#c0392b'}">${money(payable)}</b></div>
+    <div class="kpi"><span>${t('الضريبة المستحقة','VAT Payable')}</span><b class="${payable>=0?'text-pos':'text-neg'}">${money(payable)}</b></div>
   </div>
   <p class="muted">${t('الضريبة المستحقة = المخرجات − المدخلات. موجب = مستحقة للهيئة، سالب = رصيد لصالحك','VAT payable = output − input')}</p></div>`; applyLang(); window._vat={out,inp,payable}; }
 function exportVatReturn(){ if(!window._vat){ toast(t('لا بيانات','No data')); return; } const lines=[t('إقرار ضريبة القيمة المضافة','VAT Return'), t('ضريبة المخرجات','Output VAT')+': '+money(window._vat.out), t('ضريبة المدخلات','Input VAT')+': '+money(window._vat.inp), t('الضريبة المستحقة','VAT Payable')+': '+money(window._vat.payable)]; exportPDF('vat_return.pdf',lines); toast(t('تم التصدير','Exported')); }

@@ -107,7 +107,7 @@ function invTotals(){
 }
 function invRenderRows(){
   const tbody=$('#invRows'); if(!tbody) return;
-  if(!_invCart.length){ tbody.innerHTML=`<tr><td colspan="7" style="text-align:center;color:var(--muted);padding:20px">${t('لا أصناف بعد — اضغط إضافة صنف','No items — click add item')}</td></tr>`; return; }
+  if(!_invCart.length){ tbody.innerHTML=`<tr><td colspan="7" class="empty">${t('لا أصناف بعد — اضغط إضافة صنف','No items — click add item')}</td></tr>`; return; }
   const prods=DB.get('products');
   tbody.innerHTML=_invCart.map(i=>{
     const p=prods.find(x=>x.id===i.id)||{}; const av=p.qty||0;
@@ -213,7 +213,7 @@ function invAddAttachments(input){ const files=input.files; if(!files||!files.le
   input.value='';
 }
 function invRemoveAttach(idx){ confirmModal(t('حذف المرفق','Delete attachment'), t('هل تريد حذف هذا المرفق؟','Delete this attachment?'), ()=>{ _invAttach.splice(idx,1); invRenderAttach(); invAutosave(); }); }
-function invOpenAttach(idx){ const a=_invAttach[idx]; if(!a) return; const isImg=a.type&&a.type.indexOf('image/')===0; const body=isImg?`<img src="${a.data}" alt="" style="max-width:100%">`:`<iframe src="${a.data}" style="width:100%;height:70vh;border:0"></iframe>`; openModal(esc(a.name), body, [{label:t('إغلاق','Close'), cls:'btn', onClick:closeModal}]); }
+function invOpenAttach(idx){ const a=_invAttach[idx]; if(!a) return; const isImg=a.type&&a.type.indexOf('image/')===0; const body=isImg?`<img src="${a.data}" alt="" class="modal-img">`:`<iframe src="${a.data}" class="modal-frame"></iframe>`; openModal(esc(a.name), body, [{label:t('إغلاق','Close'), cls:'btn', onClick:closeModal}]); }
 function invRenderAttach(){ const box=$('#invAttachList'); if(!box) return; const cnt=$('#invAttachCount'); if(cnt) cnt.textContent=_invAttach.length?('('+_invAttach.length+')'):'';
   box.innerHTML=_invAttach.map((a,i)=>{ const isImg=a.type&&a.type.indexOf('image/')===0; const thumb=isImg?`<img src="${a.data}" alt="">`:`<span class="att-file">${a.type&&a.type.indexOf('pdf')>=0?'PDF':'📄'}</span>`; return `<div class="att-item"><button class="att-open" onclick="invOpenAttach(${i})">${thumb}<span class="att-name" title="${esc(a.name)}">${esc(a.name)}</span></button><button class="btn sm btn-danger" onclick="invRemoveAttach(${i})">×</button></div>`; }).join('');
 }

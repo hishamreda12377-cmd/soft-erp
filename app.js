@@ -32,17 +32,7 @@ function readFileAsText(file){ return new Promise((res,rej)=>{ const r=new FileR
 function csvEscape(v){ v=v==null?'':String(v); return /[",\n]/.test(v)? '"'+v.replace(/"/g,'""')+'"' : v; }
 function toCSV(rows){ return rows.map(r=>r.map(csvEscape).join(',')).join('\n'); }
 function parseCSV(text){ const lines=text.split(/\r?\n/).filter(l=>l.trim()); const out=[]; for(const ln of lines){ const row=[]; let cur='',q=false; for(let i=0;i<ln.length;i++){ const c=ln[i]; if(c==='"'){ if(q&&ln[i+1]==='"'){cur+='"';i++;} else q=!q; } else if(c===','&&!q){ row.push(cur); cur=''; } else cur+=c; } row.push(cur); out.push(row); } return out; }
-function qrSVG(text){ try{ if(typeof qrcode==='function'){ const qr=qrcode(0,'M'); qr.addData(String(text)); qr.make(); return qr.createSvgTag({cellSize:3, margin:4}); } }catch(e){} return `<div style="font-family:monospace;word-break:break-all">${esc(text)}</div>`}
-function barSVG(text){ if(!String(text||'')) return ''; let s=String(text); let x=0; let seed=s.split('').reduce((a,c)=>a+c.charCodeAt(0),0); const rnd=()=>{ seed=Math.sin(seed)*10000; return seed-Math.floor(seed); }; let inner=''; for(let i=0;i<s.length;i++){ const w=1+Math.floor(rnd()*3); inner+='<rect x="'+x+'" y="0" width="'+w+'" height="40" fill="#000"></rect>'; x+=w+(1+Math.floor(rnd()*2)); } return '<svg viewBox="0 0 '+x+' 40" xmlns="http://www.w3.org/2000/svg"><rect x="0" y="0" width="'+x+'" height="40" fill="#fff"></rect>'+inner+'</svg>'; }
-/* ============================ LAYOUT PARTIALS (restructured shell) ============================ */
-/* Consistent page header: title (with optional subtitle/icon) + action buttons on the side */
-function pageHead(title, opts){ opts=opts||{}; const ico=opts.icon?`<div class="page-head-ico">${opts.icon}</div>`:''; const sub=opts.sub?`<div class="page-head-sub">${esc(opts.sub)}</div>`:''; const actions=opts.actions?`<div class="page-head-actions">${opts.actions}</div>`:'';
-  return `<div class="page-head">${ico}<div class="page-head-text"><h2>${esc(title)}</h2>${sub}</div>${actions}</div>`; }
-/* A card/panel section with an optional title and toolbar */
-function panel(opts){ opts=opts||{}; const head=(opts.title||opts.tools)?`<div class="panel-head">${opts.title?`<h3>${esc(opts.title)}</h3>`:''}${opts.tools?`<div class="panel-tools">${opts.tools}</div>`:''}</div>`:'';
-  return `<section class="panel${opts.flush?' panel-flush':''}">${head}<div class="panel-body">${opts.body||''}</div></section>`; }
-/* Wrap a plain table as a panel */
-function panelTable(opts){ return panel(Object.assign({}, opts, {body: opts.body})); }
+/* ============================ LAYOUT PARTIALS ============================ */
 function pdfDoc(){ const J=(window.jspdf&&window.jspdf.jsPDF)?window.jspdf.jsPDF:window.jsPDF; return new J({orientation:'p',unit:'mm',format:'a4'}); }
 function exportPDF(filename, lines){ try{ const doc=pdfDoc(); let y=15; lines.forEach(l=>{ if(l===null){ doc.addPage(); y=15; return; } doc.text(String(l), 14, y); y+=7; if(y>285){ doc.addPage(); y=15; } }); doc.save(filename); }catch(e){ toast(t('تعذر إنشاء PDF','PDF failed')); } }
 /* ============================ DATA STORE ============================ */
@@ -72,6 +62,7 @@ function seedData(){ if(DB.getOne('seeded')) return;
   DB.set('suppliers',[]);
   DB.set('invoices',[]); DB.set('purchases',[]); DB.set('purchaseOrders',[]); DB.set('returns',[]); DB.set('expenses',[]); DB.set('movements',[]);
   DB.set('employees',[]); DB.set('quotes',[]); DB.set('trash',[]); DB.set('audit',[]); DB.set('coupons',[]);
+  DB.set('customerOrders',[]); DB.set('purchaseRequests',[]); DB.set('debts',[]);
   DB.setOne('seeded',true);
 }
 function seedCompanyDefaults(cid){ setCurrentCompany(cid);
@@ -80,6 +71,7 @@ function seedCompanyDefaults(cid){ setCurrentCompany(cid);
     DB.set('warehouses',[{id:uid(),name:'المخزن الرئيسي',branchId:null}]);
     DB.set('products',[]); DB.set('customers',[]);
     DB.set('suppliers',[]); DB.set('invoices',[]); DB.set('purchases',[]); DB.set('purchaseOrders',[]); DB.set('returns',[]); DB.set('expenses',[]); DB.set('movements',[]); DB.set('employees',[]); DB.set('quotes',[]); DB.set('trash',[]); DB.set('audit',[]); DB.set('coupons',[]);
+    DB.set('customerOrders',[]); DB.set('purchaseRequests',[]); DB.set('debts',[]);
     DB.setOne('seeded',true);
   }
   seedAccounts(cid);
@@ -143,13 +135,19 @@ function setActiveBranch(id){ setCurrentCompany(_activeCompanyId,id); renderShel
 function navItems(){ return [
   {id:'dashboard',icon:'📊',label:t('الرئيسية','Dashboard'),perm:'dashboard'},
   {id:'sales',icon:'🧾',label:t('المبيعات','Sales'),perm:'sales'},
+  {id:'customerOrders',icon:'📋',label:t('طلبات العملاء','Orders'),perm:'sales'},
   {id:'purchases',icon:'🛒',label:t('المشتريات','Purchases'),perm:'purchases'},
+  {id:'purchaseRequests',icon:'📋',label:t('طلبات الشراء','Purch. Req'),perm:'purchases'},
   {id:'purchaseorders',icon:'📝',label:t('أوامر الشراء','PO'),perm:'purchases'},
   {id:'returns',icon:'↩️',label:t('المرتجعات','Returns'),perm:'returns'},
   {id:'customers',icon:'👥',label:t('العملاء','Customers'),perm:'customers'},
   {id:'suppliers',icon:'🏭',label:t('الموردون','Suppliers'),perm:'suppliers'},
+  {id:'directory',icon:'📒',label:t('الدليل','Directory'),perm:'customers'},
   {id:'products',icon:'📦',label:t('المنتجات','Products'),perm:'products'},
   {id:'inventory',icon:'🏬',label:t('المخزون','Inventory'),perm:'inventory'},
+  {id:'expenses',icon:'💰',label:t('المصروفات','Expenses'),perm:'reports'},
+  {id:'debts',icon:'💳',label:t('الديون','Debts'),perm:'customers'},
+  {id:'profits',icon:'📈',label:t('الأرباح','Profits'),perm:'reports'},
   {id:'coupons',icon:'🏷️',label:t('الكوبونات','Coupons'),perm:'coupons'},
   {id:'costing',icon:'⚖️',label:t('التسعير','Costing'),perm:'accounting'},
   {id:'employees',icon:'🧑‍💼',label:t('الموظفون','Employees'),perm:'employees'},
@@ -157,6 +155,7 @@ function navItems(){ return [
   {id:'branch',icon:'📍',label:t('الفروع','Branches'),perm:'*'},
   {id:'reports',icon:'📈',label:t('التقارير','Reports'),perm:'reports'},
   {id:'audit',icon:'🛡️',label:t('سجل التدقيق','Audit Log'),perm:'*'},
+  {id:'trash',icon:'🗑️',label:t('المحذوفات','Trash'),perm:'*'},
   {id:'settings',icon:'⚙️',label:t('الإعدادات','Settings'),perm:'*'}
 ]; }
 function renderShell(){ const app=$('#app'); const comp=currentCompany();   const nav=navItems().filter(n=>hasPerm(n.perm));
@@ -166,7 +165,6 @@ function renderShell(){ const app=$('#app'); const comp=currentCompany();   cons
     <button class="pill" onclick="openSwitchModal()" title="${t('تبديل الشركة/الفرع','Switch company/branch')}">🏢 ${esc(comp?comp.name:'—')} · ${esc(activeBranch)}</button>
     <div class="top-actions">
       <button class="btn" id="langBtn">${LANG==='en'?'عربي':'EN'}</button>
-      <button class="btn" onclick="showLock(renderShell)">🔒</button>
       <span class="who">${esc((currentUser&&currentUser.name)||'')} (${roleLabel(currentUser&&currentUser.role)})</span>
     </div></header>
     <div class="layout"><nav class="sidebar">${nav.map(n=>`<button class="nav-item" data-id="${n.id}">${n.icon} <span>${n.label}</span></button>`).join('')}</nav>
@@ -193,8 +191,8 @@ function closeSidebar(){
 function openSwitchModal(){ const comps=DB.get('companies'); const branches=DB.get('branches').filter(b=>b.companyId===_activeCompanyId);
   openModal(t('الشركة / الفرع','Company / Branch'), `<label>${t('الشركة','Company')}<select id="swComp" onchange="openSwitchModal()">${comps.map(c=>`<option value="${c.id}" ${c.id===_activeCompanyId?'selected':''}>${esc(c.name)}</option>`).join('')}</select></label><label>${t('الفرع','Branch')}<select id="swBranch">${branches.map(b=>`<option value="${b.id}" ${b.id===getCurrentBranchId()?'selected':''}>${esc(b.name)}</option>`).join('')}</select></label>`, [{label:t('تطبيق','Apply'),cls:'btn-primary',onClick:()=>{ setCurrentCompany($('#swComp').value,$('#swBranch').value); closeModal(); renderShell(); }},{label:t('إلغاء','Cancel'),cls:'btn',onClick:closeModal}]); }
 function currentScreenId(){ return _currentScreenId; }
-function renderScreen(id){   const map={dashboard:renderDashboard,sales:renderSalesList,purchases:renderPurchases,purchaseorders:renderPurchaseOrders,returns:renderReturns,customers:renderCustomers,suppliers:renderSuppliers,products:renderProducts,inventory:renderInventory,coupons:renderCouponsScreen,accounting:renderAccounting,journal:renderJournalScreen,coa:renderAccountsScreen,periods:renderPeriodsScreen,assets:renderAssetsScreen,reconcile:renderReconcileScreen,costcenters:renderCostCentersScreen,closing:renderClosingScreen,vat:renderVatScreen,vouchers:renderVouchersScreen,costing:renderCostingScreen,subledger:renderSubledgersScreen,aging:renderAgingScreen,employees:renderEmployees,companies:renderCompaniesContainer,branch:renderBranchScreen,reports:renderReports,audit:renderAudit,settings:renderSettings}; if(id!=='dashboard' && !hasPerm(id)) id='dashboard'; _currentScreenId=id; const fn=map[id]||renderDashboard; fn();   $$('.nav-item').forEach(b=>b.classList.toggle('active',b.dataset.id===id));
-  enhanceTablesForMobile(); }
+function renderScreen(id){   const map={dashboard:renderDashboard,sales:renderSalesList,customerOrders:renderCustomerOrders,purchases:renderPurchases,purchaseRequests:renderPurchaseRequests,purchaseorders:renderPurchaseOrders,returns:renderReturns,customers:renderCustomers,suppliers:renderSuppliers,directory:renderDirectory,products:renderProducts,inventory:renderInventory,expenses:renderExpenses,debts:renderDebts,profits:renderProfits,coupons:renderCouponsScreen,accounting:renderAccounting,journal:renderJournalScreen,coa:renderAccountsScreen,periods:renderPeriodsScreen,assets:renderAssetsScreen,reconcile:renderReconcileScreen,costcenters:renderCostCentersScreen,closing:renderClosingScreen,vat:renderVatScreen,vouchers:renderVouchersScreen,costing:renderCostingScreen,subledger:renderSubledgersScreen,aging:renderAgingScreen,employees:renderEmployees,companies:renderCompaniesContainer,branch:renderBranchScreen,reports:renderReports,audit:renderAudit,trash:renderRecycleBin,settings:renderSettings}; if(id!=='dashboard' && !hasPerm(id)) id='dashboard'; _currentScreenId=id; const fn=map[id]||renderDashboard; fn();   $$('.nav-item').forEach(b=>b.classList.toggle('active',b.dataset.id===id));
+  enhanceTablesForMobile(); loadFocusCustomizations(); }
 function enhanceTablesForMobile(){
   if(!window.matchMedia('(max-width:560px)').matches) return;
   $$('.tbl').forEach(tbl=>{
@@ -244,15 +242,16 @@ function donutSVG(segments, size){ size=size||150; const r=size/2-10, cx=size/2,
 /* ============================ PRODUCTS ============================ */
 function renderProducts(){ const app=$('#app'); const products=DB.get('products'); const cats=DB.get('categories'); const units=DB.get('units');
   $('#screen').innerHTML=`<div class="screen">${pageHead(t('المنتجات','Products'),{sub:t('إدارة الأصناف والأسعار','Manage items, prices & stock'),actions:`<button class="btn" onclick="importProducts()">${t('استيراد','Import')}</button><button class="btn" onclick="exportProducts()">${t('تصدير','Export')}</button><button class="btn btn-primary" onclick="openProductModal()">＋ ${t('منتج جديد','New Product')}</button>`})}
-    <div class="filters"><input id="prodSearch" placeholder="${t('بحث','Search')}" oninput="renderProducts()"><select id="prodCat" onchange="renderProducts()">${['',...cats.map(c=>c.name)].map(v=>`<option ${v?'':'selected'} value="${esc(v)}">${esc(v||t('كل التصنيفات','All categories'))}</option>`).join('')}</select></div>
+    <div class="filters"><div class="field-inline"><input id="prodSearch" placeholder="${t('بحث أو مسح باركود','Search or scan barcode')}" oninput="renderProducts()"><button class="voice-btn btn sm" onclick="startVoiceSearch('prodSearch')" title="${t('بحث صوتي','Voice search')}">🎤</button><button class="btn sm" onclick="openScanner('prodSearch')" title="${t('مسح باركود','Scan barcode')}">📷</button></div><select id="prodCat" onchange="renderProducts()">${['',...cats.map(c=>c.name)].map(v=>`<option ${v?'':'selected'} value="${esc(v)}">${esc(v||t('كل التصنيفات','All categories'))}</option>`).join('')}</select></div>
     ${panel({flush:true, body:'<div id="prodWrap"></div>'})}</div>`;
   const q=($('#prodSearch').value||'').toLowerCase(); const cat=$('#prodCat').value;
   let list=products.filter(p=>(!q||(p.name||'').toLowerCase().includes(q)||(p.code||'').toLowerCase().includes(q)||(p.barcode||'').includes(q)));
   if(cat) list=list.filter(p=>p.category===cat);
   $('#prodWrap').innerHTML=`<table class="tbl"><thead><tr><th>${t('اسم','Name')}</th><th>${t('كود','Code')}</th><th>${t('تصنيف','Category')}</th><th>${t('شراء','Buy')}</th><th>${t('بيع','Sell')}</th><th>${t('كمية','Qty')}</th><th></th></tr></thead><tbody>${list.map(p=>`<tr><td>${esc(p.name)}</td><td>${esc(p.code)}</td><td>${esc(p.category)}</td><td>${fmt(p.buyingPrice)}</td><td>${fmt(p.sellingPrice)}</td><td>${fmt(p.qty)}</td><td><button class="btn" onclick="openProductModal('${p.id}')">${t('تعديل','Edit')}</button> <button class="btn btn-danger" onclick="deleteProduct('${p.id}')">${t('حذف','Delete')}</button> <button class="btn" onclick="showProductCode('${p.id}')">${t('باركود','Barcode')}</button></td></tr>`).join('')}</tbody></table>`; applyLang(); }
 function openProductModal(id){ const p=id?DB.get('products').find(x=>x.id===id):null; const cats=DB.get('categories'); const units=DB.get('units');
+  const imgField=`<div class="form-field"><span class="lbl">${t('الصورة','Image')}</span><div class="field-inline"><input id="pImage" value="${esc(p?p.image:'')}" placeholder="URL"><button class="btn sm" onclick="captureCamera('pImage')">${t('كاميرا','Camera')}</button></div></div>`;
   openModal(t('منتج','Product'), `<div class="form-grid">
-    <div class="form-field"><span class="lbl">${t('الاسم','Name')}</span><input id="pName" value="${esc(p?p.name:'')}"></div>
+    <div class="form-field"><span class="lbl">${t('الاسم','Name')}</span><input id="pName" value="${esc(p?p.name:'')}"></div>${imgField}
     <div class="form-field"><span class="lbl">${t('الباركود','Barcode')}</span><div class="field-inline"><input id="pBarcode" value="${esc(p?p.barcode:'')}"><button class="btn" onclick="openScanner('pBarcode')">📷 ${t('مسح','Scan')}</button></div></div>
     <div class="form-field"><span class="lbl">${t('التصنيف','Category')}</span><input id="pCat" list="catList" value="${esc(p?p.category:'')}"><datalist id="catList">${cats.map(c=>`<option value="${esc(c.name)}">`).join('')}</datalist></div>
     <div class="form-field"><span class="lbl">${t('الوحدة','Unit')}</span><input id="pUnit" list="unitList" value="${esc(p?p.unit:'')}"><datalist id="unitList">${units.map(u=>`<option value="${esc(u.name)}">`).join('')}</datalist></div>
@@ -264,7 +263,7 @@ function openProductModal(id){ const p=id?DB.get('products').find(x=>x.id===id):
     <div class="form-field"><span class="lbl">${t('خصم افتراضي %','Disc %')}</span><input id="pDisc" type="number" value="${p?p.defaultDiscount:0}"></div>
   </div>`, [{label:t('حفظ','Save'),cls:'btn-primary',onClick:()=>{ const name=$('#pName').value.trim(); if(!name){toast(t('الاسم مطلوب','Name required'));return;} const prd=DB.get('products'); const obj={name,barcode:$('#pBarcode').value,code:$('#pBarcode').value,category:$('#pCat').value,unit:$('#pUnit').value,buyingPrice:Number($('#pBuy').value)||0,sellingPrice:Number($('#pSell').value)||0,minQty:Number($('#pMin').value)||0,qty:Number($('#pQty').value)||0,tax:Number($('#pTax').value)||0,defaultDiscount:Number($('#pDisc').value)||0,qrcode:$('#pBarcode').value}; const vres=Validate.schema({buyingPrice:{type:'number',min:0,label:t('سعر الشراء','Buy')},sellingPrice:{type:'number',min:0,label:t('سعر البيع','Sell')},qty:{type:'number',min:0,label:t('الكمية','Qty')},minQty:{type:'number',min:0,label:t('أدنى كمية','Min Qty')},tax:{type:'number',min:0,max:100,label:t('الضريبة','Tax')}}, obj); if(!Validate.report(vres)) return; if(p){ const before={name:p.name,code:p.code,buyingPrice:p.buyingPrice,sellingPrice:p.sellingPrice,qty:p.qty,minQty:p.minQty}; Object.assign(p,obj); logAudit(t('تعديل منتج','Edit product'), p.name, {type:CFG.AUDIT.EDIT, ref:p.id, changes:diffChanges(before, obj, {name:t('الاسم','Name'),code:t('الكود','Code'),buyingPrice:t('شراء','Buy'),sellingPrice:t('بيع','Sell'),qty:t('كمية','Qty'),minQty:t('أدنى','Min')})}); } else { obj.id=uid(); obj.status='active'; obj.createdAt=nowISO(); prd.push(obj); logAudit(t('إضافة منتج','Add product'), obj.name, {type:CFG.AUDIT.ADD, ref:obj.id}); } DB.set('products',prd); closeModal(); renderProducts(); }},{label:t('إلغاء','Cancel'),cls:'btn',onClick:closeModal}]); }
 function deleteProduct(id){ confirmModal(t('حذف','Delete'), t('حذف المنتج؟','Delete product?'), ()=>{ const p=DB.get('products').find(x=>x.id===id); DB.set('products',DB.get('products').filter(x=>x.id!==id)); if(p) logAudit(t('حذف منتج','Delete product'), p.name+' ('+p.code+')', {type:CFG.AUDIT.DELETE, ref:p.id}); renderProducts(); }); }
-function showProductCode(id){ const p=DB.get('products').find(x=>x.id===id); openModal(t('باركود/QR','Barcode/QR'), `<div style="text-align:center"><div>${qrSVG(p.qrcode||p.barcode||p.code)}</div><div style="font-family:monospace;margin-top:8px">${esc(p.barcode||p.code)}</div><button class="btn" onclick="window.print()">${t('طباعة','Print')}</button></div>`, [{label:t('إغلاق','Close'),cls:'btn',onClick:closeModal}]); }
+function showProductCode(id){ const p=DB.get('products').find(x=>x.id===id); openModal(t('باركود/QR','Barcode/QR'), `<div class="text-center"><div>${qrSVG(p.qrcode||p.barcode||p.code)}</div><div class="mono mt-sm">${esc(p.barcode||p.code)}</div><button class="btn" onclick="window.print()">${t('طباعة','Print')}</button></div>`, [{label:t('إغلاق','Close'),cls:'btn',onClick:closeModal}]); }
 function importProducts(){ const inp=document.createElement('input'); inp.type='file'; inp.accept='.csv'; inp.onchange=async()=>{ const txt=await readFileAsText(inp.files[0]); const rows=parseCSV(txt); if(rows.length<2){toast(t('ملف فارغ','Empty file'));return;} const head=rows[0].map(h=>h.trim()); const prods=DB.get('products'); rows.slice(1).forEach(r=>{ const o={}; head.forEach((h,i)=>o[h]=r[i]); prods.push({id:uid(),name:o.name||'',code:o.code||'',barcode:o.barcode||'',category:o.category||'',unit:o.unit||'',buyingPrice:Number(o.buyingPrice)||0,sellingPrice:Number(o.sellingPrice)||0,wholesalePrice:Number(o.wholesalePrice)||0,minQty:Number(o.minQty)||0,qty:Number(o.qty)||0,tax:Number(o.tax)||0,defaultDiscount:Number(o.defaultDiscount)||0,location:o.location||'',qrcode:o.qrcode||o.barcode||'',status:'active',createdAt:nowISO()}); }); DB.set('products',prods); toast(t('تم الاستيراد','Imported')); renderProducts(); }; inp.click(); }
 function exportProducts(){ const rows=[['name','code','barcode','category','unit','buyingPrice','sellingPrice','qty','tax','location']]; DB.get('products').forEach(p=>rows.push([p.name,p.code,p.barcode,p.category,p.unit,p.buyingPrice,p.sellingPrice,p.qty,p.tax,p.location])); downloadFile('products.csv', toCSV(rows),'text/csv'); }
 function importCustomers(){ importCSVGeneric('customers', ['name','phone','email','address','taxNo','creditLimit','notes'], (o)=>({id:uid(),name:o.name||'',phone:o.phone||'',email:o.email||'',address:o.address||'',taxNo:o.taxNo||'',creditLimit:Number(o.creditLimit)||0,balance:0,points:0,notes:o.notes||''}), ()=>renderCustomers()); }
@@ -280,12 +279,16 @@ function renderCouponsScreen(){ $('#screen')._coupons=true; $('#screen').innerHT
 function applyCouponToCart(cart, coupon){ let disc=0; if(!coupon) return {disc:0}; const subtotal=cart.reduce((s,i)=>s+i.subtotal,0); if(coupon.type==='percent') disc=subtotal*(coupon.value/100); else disc=Math.min(coupon.value,subtotal); return {disc}; }
 /* ============================ CUSTOMERS ============================ */
 function renderCustomers(){ const list=DB.get('customers');   $('#screen').innerHTML=`<div class="screen">${pageHead(t('العملاء','Customers'),{sub:t('العملاء والرصيد والأرصدة الآجلة','Customers, balances & receivables'),actions:`<button class="btn btn-primary" onclick="openCustomerModal()">＋ ${t('عميل جديد','New Customer')}</button><button class="btn" onclick="importCustomers()">${t('استيراد CSV','Import CSV')}</button><button class="btn" onclick="exportCustomers()">${t('تصدير CSV','Export CSV')}</button>`})}
+  <div class="filters"><div class="field-inline"><input id="custSearch" placeholder="${t('بحث بالاسم أو الهاتف','Search name or phone')}" oninput="filterCustomersList()"><button class="voice-btn btn sm" onclick="startVoiceSearch('custSearch')">🎤</button></div></div>
   ${panel({flush:true, body:`<table class="tbl"><thead><tr><th>${t('الاسم','Name')}</th><th>${t('الهاتف','Phone')}</th><th>${t('الرصيد','Balance')}</th><th>${t('النقاط','Points')}</th><th></th></tr></thead><tbody>${list.map(c=>`<tr><td>${esc(c.name)}</td><td>${esc(c.phone)}</td><td>${fmt(c.balance)}</td><td>${fmt(c.points)}</td><td><button class="btn" onclick="openCustomerModal('${c.id}')">${t('تعديل','Edit')}</button> <button class="btn" onclick="customerStatement('${c.id}')">${t('كشف حساب','Statement')}</button> <button class="btn btn-danger" onclick="deleteCustomer('${c.id}')">${t('حذف','Delete')}</button></td></tr>`).join('')}</tbody></table>`})}</div>`; applyLang(); }
+function filterCustomersList(){ const q=(($('#custSearch').value||'').toLowerCase()); document.querySelectorAll('#screen .tbl tbody tr').forEach(r=>{ r.style.display=r.textContent.toLowerCase().includes(q)?'':'none'; }); }
 function openCustomerModal(id){ const c=id?DB.get('customers').find(x=>x.id===id):null; openModal(t('عميل','Customer'), `<div class="form-grid"><label>${t('الاسم','Name')}<input id="cName" value="${esc(c?c.name:'')}"></label><label>${t('الهاتف','Phone')}<input id="cPhone" value="${esc(c?c.phone:'')}"></label><label>${t('البريد','Email')}<input id="cEmail" value="${esc(c?c.email:'')}"></label><label>${t('العنوان','Address')}<input id="cAddr" value="${esc(c?c.address:'')}"></label><label>${t('الرقم الضريبي','Tax No')}<input id="cTax" value="${esc(c?c.taxNo:'')}"></label><label>${t('حد الائتمان','Credit Limit')}<input id="cLimit" type="number" value="${c?c.creditLimit:0}"></label><label>${t('النقاط','Points')}<input id="cPoints" type="number" value="${c?c.points:0}"></label>  </div>`, [{label:t('حفظ','Save'),cls:'btn-primary',onClick:()=>{ const name=$('#cName').value.trim(); if(!name){toast(t('الاسم مطلوب','Name required'));return;} let list=DB.get('customers'); if(c){ const before={name:c.name,phone:c.phone,creditLimit:c.creditLimit,points:c.points}; Object.assign(c,{name,phone:$('#cPhone').value,email:$('#cEmail').value,address:$('#cAddr').value,taxNo:$('#cTax').value,creditLimit:Number($('#cLimit').value)||0,points:Number($('#cPoints').value)||0}); logAudit(t('تعديل عميل','Edit customer'), c.name, {type:CFG.AUDIT.EDIT, ref:c.id, changes:diffChanges(before, c, {name:t('الاسم','Name'),phone:t('الهاتف','Phone'),creditLimit:t('حد الائتمان','Credit limit'),points:t('النقاط','Points')})}); } else { const o={id:uid(),name,phone:$('#cPhone').value,email:$('#cEmail').value,address:$('#cAddr').value,taxNo:$('#cTax').value,creditLimit:Number($('#cLimit').value)||0,points:Number($('#cPoints').value)||0,balance:0,notes:''}; list.push(o); logAudit(t('إضافة عميل','Add customer'), o.name, {type:CFG.AUDIT.ADD, ref:o.id}); } DB.set('customers',list); closeModal(); renderCustomers(); }},{label:t('إلغاء','Cancel'),cls:'btn',onClick:closeModal}]); }
 function deleteCustomer(id){ confirmModal(t('حذف','Delete'), t('حذف العميل؟','Delete customer?'), ()=>{ const c=DB.get('customers').find(x=>x.id===id); DB.set('customers',DB.get('customers').filter(x=>x.id!==id)); if(c) logAudit(t('حذف عميل','Delete customer'), c.name, {type:CFG.AUDIT.DELETE, ref:c.id}); renderCustomers(); }); }
 /* ============================ SUPPLIERS ============================ */
 function renderSuppliers(){ const list=DB.get('suppliers'); $('#screen').innerHTML=`<div class="screen">${pageHead(t('الموردون','Suppliers'),{sub:t('الموردون والأرصدة المستحقة','Suppliers & payables'),actions:`<button class="btn btn-primary" onclick="openSupplierModal()">＋ ${t('مورد جديد','New Supplier')}</button><button class="btn" onclick="importSuppliers()">${t('استيراد CSV','Import CSV')}</button><button class="btn" onclick="exportSuppliers()">${t('تصدير CSV','Export CSV')}</button>`})}
+  <div class="filters"><div class="field-inline"><input id="supSearch" placeholder="${t('بحث بالاسم أو الهاتف','Search name or phone')}" oninput="filterSuppliersList()"><button class="voice-btn btn sm" onclick="startVoiceSearch('supSearch')">🎤</button></div></div>
   ${panel({flush:true, body:`<table class="tbl"><thead><tr><th>${t('الاسم','Name')}</th><th>${t('الهاتف','Phone')}</th><th>${t('الرصيد','Balance')}</th><th></th></tr></thead><tbody>${list.map(s=>`<tr><td>${esc(s.name)}</td><td>${esc(s.phone)}</td><td>${fmt(s.balance)}</td><td><button class="btn" onclick="openSupplierModal('${s.id}')">${t('تعديل','Edit')}</button> <button class="btn" onclick="supplierStatement('${s.id}')">${t('كشف حساب','Statement')}</button> <button class="btn btn-danger" onclick="deleteSupplier('${s.id}')">${t('حذف','Delete')}</button></td></tr>`).join('')}</tbody></table>`})}</div>`; applyLang(); }
+function filterSuppliersList(){ const q=(($('#supSearch').value||'').toLowerCase()); document.querySelectorAll('#screen .tbl tbody tr').forEach(r=>{ r.style.display=r.textContent.toLowerCase().includes(q)?'':'none'; }); }
 function openSupplierModal(id){ const s=id?DB.get('suppliers').find(x=>x.id===id):null; openModal(t('مورد','Supplier'), `<div class="form-grid"><label>${t('الاسم','Name')}<input id="sName" value="${esc(s?s.name:'')}"></label><label>${t('الهاتف','Phone')}<input id="sPhone" value="${esc(s?s.phone:'')}"></label><label>${t('البريد','Email')}<input id="sEmail" value="${esc(s?s.email:'')}"></label><label>${t('العنوان','Address')}<input id="sAddr" value="${esc(s?s.address:'')}"></label>  </div>`, [{label:t('حفظ','Save'),cls:'btn-primary',onClick:()=>{ const name=$('#sName').value.trim(); if(!name){toast(t('الاسم مطلوب','Name required'));return;} let list=DB.get('suppliers'); if(s){ const before={name:s.name,phone:s.phone}; Object.assign(s,{name,phone:$('#sPhone').value,email:$('#sEmail').value,address:$('#sAddr').value}); logAudit(t('تعديل مورد','Edit supplier'), s.name, {type:CFG.AUDIT.EDIT, ref:s.id, changes:diffChanges(before, s, {name:t('الاسم','Name'),phone:t('الهاتف','Phone')})}); } else { const o={id:uid(),name,phone:$('#sPhone').value,email:$('#sEmail').value,address:$('#sAddr').value,balance:0,notes:''}; list.push(o); logAudit(t('إضافة مورد','Add supplier'), o.name, {type:CFG.AUDIT.ADD, ref:o.id}); } DB.set('suppliers',list); closeModal(); renderSuppliers(); }},{label:t('إلغاء','Cancel'),cls:'btn',onClick:closeModal}]); }
 function deleteSupplier(id){ confirmModal(t('حذف','Delete'), t('حذف المورد؟','Delete supplier?'), ()=>{ const s=DB.get('suppliers').find(x=>x.id===id); DB.set('suppliers',DB.get('suppliers').filter(x=>x.id!==id)); if(s) logAudit(t('حذف مورد','Delete supplier'), s.name, {type:CFG.AUDIT.DELETE, ref:s.id}); renderSuppliers(); }); }
 function customerStatement(id){ partyStatement('customer', id); }
@@ -310,7 +313,7 @@ function partyStatement(kind, id){ const isCust=kind==='customer'; const party=i
     <div class="stmt-head"><h3>${esc(party.name)}</h3><div class="muted">${isCust?t('كشف حساب عميل','Customer Statement'):t('كشف حساب مورد','Supplier Statement')} — ${fmtDate(new Date().toISOString().slice(0,10))}</div>
     <div class="muted">${esc((comp.name||s.companyName||'')+(party.phone?' · '+party.phone:''))}</div></div>
     <table class="tbl"><thead><tr><th>${t('التاريخ','Date')}</th><th>${t('المرجع','Ref')}</th><th>${t('البيان','Desc')}</th><th>${t('مدين','Debit')}</th><th>${t('دائن','Credit')}</th><th>${t('الرصيد','Balance')}</th></tr></thead><tbody>${rows.length?rows.map(e=>`<tr><td>${fmtDate(e.date)}</td><td>${esc(e.code)}</td><td>${esc(e.desc)}</td><td>${e.debit?money(e.debit):''}</td><td>${e.credit?money(e.credit):''}</td><td class="${e.balance<0?'neg':''}">${money(e.balance)}</td></tr>`).join(''):`<tr><td colspan="6" class="empty">${t('لا حركات','No transactions')}</td></tr>`}</tbody><tfoot><tr><td colspan="5" class="stmt-tot">${t('الرصيد الحالي','Current Balance')}</td><td class="stmt-tot ${party.balance<0?'neg':''}">${money(party.balance||0)}</td></tr></tfoot></table></div>`;
-  openModal(t('كشف حساب','Statement')+' · '+esc(party.name), body, [{label:'🖨️ '+t('طباعة','Print'),cls:'btn',onClick:()=>{ const w=window.open('','_blank'); if(w){ w.document.write('<html dir="'+(LANG==='en'?'ltr':'rtl')+'" lang="'+(LANG==='en'?'en':'ar')+'"><head><title>'+esc(party.name)+'</title><style>body{font-family:Tahoma;padding:16px}table{width:100%;border-collapse:collapse}td,th{border:1px solid #ccc;padding:6px;text-align:right}.stmt-head{margin-bottom:10px}.muted{color:#666;font-size:12px}.neg{color:#c0392b}.stmt-tot{font-weight:800}</style></head><body>'+body+'</body></html>'); w.document.close(); setTimeout(()=>w.print(),120); } }},
+  openModal(t('كشف حساب','Statement')+' · '+esc(party.name), body, [{label:'🖨️ '+t('طباعة','Print'),cls:'btn',onClick:()=>{ const w=window.open('','_blank'); if(w){ w.document.write('<html dir="'+(LANG==='en'?'ltr':'rtl')+'" lang="'+(LANG==='en'?'en':'ar')+'"><head><title>'+esc(party.name)+'</title><link rel="stylesheet" href="print.css"></head><body class="stmt-print">'+body+'</body></html>'); w.document.close(); setTimeout(()=>w.print(),120); } }},
    {label:'PDF',cls:'btn',onClick:()=>{ try{ const doc=pdfDoc(); doc.setFontSize(14); doc.text(t('كشف حساب','Statement')+' - '+party.name,10,16); doc.setFontSize(9); let y=28; doc.text(fmtDate(new Date().toISOString().slice(0,10)),10,24); const head=[t('التاريخ','Date'),t('المرجع','Ref'),t('البيان','Desc'),t('مدين','Debit'),t('دائن','Credit'),t('الرصيد','Balance')]; const rr=rows.map(e=>[fmtDate(e.date),e.code,e.desc,e.debit?fmt(e.debit):'',e.credit?fmt(e.credit):'',fmt(e.balance)]); rr.push(['','',t('الرصيد الحالي','Balance'),'','',fmt(party.balance||0)]); exportTablePDFBody(doc,y,head,rr); doc.save('statement_'+party.name+'.pdf'); }catch(e){ toast(t('تعذر إنشاء PDF','PDF failed')); } }},
    {label:t('إغلاق','Close'),cls:'btn',onClick:closeModal}]);
   logAudit(t('كشف حساب','Statement'), (isCust?t('عميل','Customer'):t('مورد','Supplier'))+': '+party.name, {type:CFG.AUDIT.OTHER});
@@ -318,16 +321,38 @@ function partyStatement(kind, id){ const isCust=kind==='customer'; const party=i
 function exportTablePDFBody(doc,y,headers,rows){ const startX=10; const pageW=doc.internal.pageSize.getWidth(); const cols=headers.length; const avail=pageW-startX-10; const cw=headers.map(()=>avail/cols); const drawHead=()=>{ let x=startX; doc.setFillColor(59,91,219); doc.setTextColor(255,255,255); headers.forEach((h,i)=>{ doc.rect(x,y,cw[i],7,'F'); doc.text(String(h==null?'':h),x+2,y+5); x+=cw[i]; }); doc.setTextColor(0,0,0); y+=7; }; drawHead(); rows.forEach(r=>{ if(y>280){ doc.addPage(); y=16; drawHead(); } let x=startX; r.forEach((c,i)=>{ doc.rect(x,y,cw[i],7); doc.text(String(c==null?'':c),x+2,y+5); x+=cw[i]; }); y+=7; }); }
 /* ============================ INVENTORY ============================ */
 function renderInventory(){ const products=DB.get('products'); const whs=DB.get('warehouses'); const movs=DB.get('movements').slice(-50).reverse(); const whCols=whs.map(w=>`<th>${esc(w.name)}</th>`).join('');
+  const totalItems=products.length;
+  const purchaseValue=products.reduce((s,p)=>s+(p.qty||0)*(p.buyingPrice||0),0);
+  const sellValue=products.reduce((s,p)=>s+(p.qty||0)*(p.sellingPrice||0),0);
+  const lowStock=products.filter(p=>(p.qty||0)<=(p.minQty||0)&&p.status!=='inactive').length;
+  const bento=`<div class="bento-grid"><div class="bento-card accent"><div class="bento-val">${totalItems}</div><div class="bento-lbl">${t('إجمالي الأصناف','Total Items')}</div></div><div class="bento-card"><div class="bento-val">${money(purchaseValue)}</div><div class="bento-lbl">${t('قيمة المخزون (شراء)','Purchase Value')}</div></div><div class="bento-card"><div class="bento-val">${money(sellValue)}</div><div class="bento-lbl">${t('القيمة البيعية','Selling Value')}</div></div><div class="bento-card ${lowStock>0?'dark':''}"><div class="bento-val">${lowStock}</div><div class="bento-lbl">${t('أصناف منخفضة','Low Stock')}</div></div></div>`;
   $('#screen').innerHTML=`<div class="screen">${pageHead(t('المخزون','Inventory'),{icon:'📦',sub:t('أرصدة المخازن والحركات','Stock by warehouse & movements'),actions:`<button class="btn" onclick="openAdjustModal()">${t('تسوية','Adjust')}</button><button class="btn" onclick="openTransferModal()">${t('نقل','Transfer')}</button><button class="btn btn-primary" onclick="openStocktakeModal()">${t('جرد','Stocktake')}</button>`})}
-  ${panel({flush:true, body:`<table class="tbl"><thead><tr><th>${t('المنتج','Product')}</th>${whCols}<th>${t('الإجمالي','Total')}</th><th>${t('الحالة','Status')}</th></tr></thead><tbody>${products.map(p=>{ const low=(p.qty||0)<=(p.minQty||0); const cells=whs.map(w=>`<td class="${whStock(p,w.id)<=(p.minQty||0)?'qty-low':''}">${fmt(whStock(p,w.id))}</td>`).join(''); return `<tr><td>${esc(p.name)}</td>${cells}<td class="${low?'qty-low':''}">${fmt(p.qty)}</td><td>${low?('⚠️ '+t('منخفض','Low')):(p.status==='active'?t('نشط','Active'):t('معطل','Inactive'))}</td></tr>`; }).join('')}</tbody></table>`})}
+  ${bento}
+  ${panel({flush:true, body:`<table class="tbl"><thead><tr><th>${t('المنتج','Product')}</th>${whCols}<th>${t('الإجمالي','Total')}</th><th>${t('الحالة','Status')}</th><th></th></tr></thead><tbody>${products.map(p=>{ const low=(p.qty||0)<=(p.minQty||0); const cells=whs.map(w=>`<td class="${whStock(p,w.id)<=(p.minQty||0)?'qty-low':''}">${fmt(whStock(p,w.id))}</td>`).join(''); return `<tr><td>${esc(p.name)}</td>${cells}<td class="${low?'qty-low':''}">${fmt(p.qty)}</td><td>${low?('⚠️ '+t('منخفض','Low')):(p.status==='active'?t('نشط','Active'):t('معطل','Inactive'))}</td><td><button class="btn sm" onclick="adjStockInline('${p.id}',1)">＋</button> <button class="btn sm" onclick="adjStockInline('${p.id}',-1)">−</button> <button class="btn sm" onclick="shareProductAsImage('${p.id}')">🖼️</button></td></tr>`; }).join('')}</tbody></table>`})}
   <div class="section-title">${t('حركة المخزون','Movements')}</div>${panel({flush:true, body:`<table class="tbl"><thead><tr><th>${t('التاريخ','Date')}</th><th>${t('المنتج','Product')}</th><th>${t('النوع','Type')}</th><th>${t('الكمية','Qty')}</th><th>${t('من/إلى','From/To')}</th></tr></thead><tbody>${movs.map(m=>{ const p=products.find(x=>x.id===m.productId); return `<tr><td>${fmtDateTime(m.time)}</td><td>${esc(p?p.name:'')}</td><td>${esc(m.type)}</td><td>${fmt(m.qty)}</td><td>${esc(m.wh||'')}</td></tr>`; }).join('')}</tbody></table>`})}</div>`; applyLang(); }
+function adjStockInline(pid,delta){
+  const products=DB.get('products');
+  const p=products.find(x=>x.id===pid);
+  if(!p) return;
+  const newQty=Math.max(0,(p.qty||0)+delta);
+  adjStock(p,newQty-(p.qty||0),defaultWhId());
+  DB.set('products',products);
+  const movements=DB.get('movements');
+  movements.push({id:uid(),time:nowISO(),productId:pid,type:delta>0?t('إضافة','Add'):t('خصم','Remove'),qty:delta,wh:'',note:''});
+  DB.set('movements',movements);
+  renderInventory();
+}
+function shareProductAsImage(id){
+  const p=DB.get('products').find(x=>x.id===id); if(!p) return;
+  openModal(t('مشاركة المنتج','Share Product'),`<div id="prodShareCard" style="padding:20px;text-align:center;background:var(--panel);border-radius:var(--radius)"><h3>${esc(p.name)}</h3><p>${t('الكود','Code')}: ${esc(p.code||p.barcode||'')}</p><p>${t('شراء','Buy')}: ${money(p.buyingPrice)} · ${t('بيع','Sell')}: ${money(p.sellingPrice)}</p><p>${t('الكمية','Qty')}: ${fmt(p.qty)}</p><p>${t('التصنيف','Category')}: ${esc(p.category||'')}</p></div>`,[{label:t('مشاركة','Share'),cls:'btn-primary',onClick:()=>{closeModal();shareAsJPG('prodShareCard',p.name);}},{label:t('إغلاق','Close'),cls:'btn',onClick:closeModal}]);
+}
 function openAdjustModal(){ const reasons=[['count',t('جرد','Count')],['loss',t('فاقد','Loss')],['damage',t('تالف','Damage')],['found',t('موجود إضافي','Found')],['correction',t('تصحيح','Correction')]];
   openModal(t('تسوية مخزون','Stock Adjust'), `<div class="form-grid"><label>${t('المنتج','Product')}<select id="adjProd">${DB.get('products').map(p=>`<option value="${p.id}">${esc(p.name)}</option>`).join('')}</select></label><label>${t('الكمية الصحيحة','Correct Qty')}<input id="adjQty" type="number" value="0"></label><label>${t('نوع التسوية','Type')}<select id="adjType">${reasons.map(r=>`<option value="${r[0]}">${r[1]}</option>`).join('')}</select></label><label>${t('السبب','Reason')}<input id="adjReason" value="${t('جرد','Count')}"></label></div>`, [{label:t('تطبيق','Apply'),cls:'btn-primary',onClick:()=>{ const products=DB.get('products'); const pid=$('#adjProd').value; const p=products.find(x=>x.id===pid); if(!p) return; const q=Number($('#adjQty').value)||0; const diff=q-(p.qty||0); const cost=p.buyingPrice||0; const val=Math.abs(diff)*cost; const type=$('#adjType').value; const reason=$('#adjReason').value||type; if(!p.stockByWh)p.stockByWh={};p.stockByWh[defaultWhId()]=q;recountQty(p); DB.set('products',products); const movements=DB.get('movements'); movements.push({id:uid(),time:nowISO(),productId:pid,type:t('تسوية','Adjust'),qty:diff,wh:'',note:(reason+' / '+type)}); DB.set('movements',movements);
     if(diff!==0){ const J=DB.get('journal'); const d=new Date().toISOString().slice(0,10); const lines=diff<0?[{accountId:CFG.ACC.LOSS,debit:val,credit:0},{accountId:CFG.ACC.INVENTORY,debit:0,credit:val}]:[{accountId:CFG.ACC.INVENTORY,debit:val,credit:0},{accountId:CFG.ACC.ADJUST,debit:0,credit:val}]; J.push({id:uid(),date:d,desc:t('تسوية','Adjust')+' '+p.name,lines:normalizeLines(lines),ref:'adj_'+pid}); DB.set('journal',J); }
     logAudit(t('تسوية مخزون','Stock adjust'),p.name+' ('+reason+')'); closeModal(); renderInventory(); }},{label:t('إلغاء','Cancel'),cls:'btn',onClick:closeModal}]); }
 function openStocktakeModal(){ const whs=DB.get('warehouses'); const def=whs[0]?whs[0].id:'';
   const rows=DB.get('products').filter(p=>p.status!=='inactive').map(p=>`<tr class="stk-row" data-name="${(p.name||'').toLowerCase().replace(/"/g,'')}"><td>${esc(p.name)}</td><td class="stk-cur">${fmt(whStock(p,def))}</td><td><input id="stk_${p.id}" type="number" value="${fmt(whStock(p,def))}" class="stk-input" data-id="${p.id}"></td></tr>`).join('');
-  openModal(t('جرد المخزون','Stocktake'), `<div class="form-grid"><label>${t('المخزن','Warehouse')}<select id="stkWh" onchange="stkReloadCur()">${whs.map(w=>`<option value="${w.id}">${esc(w.name)}</option>`).join('')}</select></label><input id="stkSearch" placeholder="${t('بحث عن صنف','Search item')}" oninput="stkFilter(this.value)" style="min-width:200px"><span class="muted">${t('أدخل الكمية الفعلية المعدودة لكل صنف، ثم طبّق الفروق','Enter actual counted qty per item, then apply differences')}</span></div><div class="stk-scroll"><table class="tbl stk-tbl"><thead><tr><th>${t('المنتج','Product')}</th><th>${t('الحالي','Current')}</th><th>${t('المعدود','Counted')}</th></tr></thead><tbody id="stkBody">${rows}</tbody></table></div>`, [
+  openModal(t('جرد المخزون','Stocktake'), `<div class="form-grid"><label>${t('المخزن','Warehouse')}<select id="stkWh" onchange="stkReloadCur()">${whs.map(w=>`<option value="${w.id}">${esc(w.name)}</option>`).join('')}</select></label><input id="stkSearch" placeholder="${t('بحث عن صنف','Search item')}" oninput="stkFilter(this.value)" class="field-min-w"><span class="muted">${t('أدخل الكمية الفعلية المعدودة لكل صنف، ثم طبّق الفروق','Enter actual counted qty per item, then apply differences')}</span></div><div class="stk-scroll"><table class="tbl stk-tbl"><thead><tr><th>${t('المنتج','Product')}</th><th>${t('الحالي','Current')}</th><th>${t('المعدود','Counted')}</th></tr></thead><tbody id="stkBody">${rows}</tbody></table></div>`, [
     {label:t('تطبيق الفروق','Apply Differences'),cls:'btn-primary',onClick:()=>{ const wh=$('#stkWh').value; const products=DB.get('products'); const movements=DB.get('movements'); const J=DB.get('journal'); const d=new Date().toISOString().slice(0,10); let n=0;
       products.forEach(p=>{ if(p.status==='inactive') return; const inp=$('#stk_'+p.id); if(!inp) return; const counted=Number(inp.value)||0; const cur=whStock(p,wh); const diff=counted-cur; if(diff===0) return; adjStock(p,diff,wh); movements.push({id:uid(),time:nowISO(),productId:p.id,type:t('جرد','Stocktake'),qty:diff,wh:(whs.find(w=>w.id===wh)||{}).name||'',note:t('جرد','Stocktake')}); const val=Math.abs(diff)*(p.buyingPrice||0); if(val>0){ const lines=diff<0?[{accountId:CFG.ACC.LOSS,debit:val,credit:0},{accountId:CFG.ACC.INVENTORY,debit:0,credit:val}]:[{accountId:CFG.ACC.INVENTORY,debit:val,credit:0},{accountId:CFG.ACC.ADJUST,debit:0,credit:val}]; J.push({id:uid(),date:d,desc:t('جرد','Stocktake')+' '+p.name,lines:normalizeLines(lines),ref:'stk_'+p.id}); } n++; });
       DB.set('products',products); DB.set('movements',movements); DB.set('journal',J);
@@ -346,7 +371,7 @@ function recountQty(p){ let s=0; if(p.stockByWh) Object.keys(p.stockByWh).forEac
 function adjStock(p, delta, whId){ if(!p.stockByWh) p.stockByWh={}; const w=whId||defaultWhId(); p.stockByWh[w]=(Number(p.stockByWh[w]||0))+delta; if(p.stockByWh[w]<0) p.stockByWh[w]=0; recountQty(p); }
 function openTransferModal(){ const whs=DB.get('warehouses'); if(whs.length<2){ toast(t('أضف مخزنين على الأقل للنقل','Add at least two warehouses to transfer')); return; }
   const defWh=whs[0].id;
-  openModal(t('نقل بين المخازن','Transfer'), `<div class="form-grid"><label>${t('المنتج','Product')}<select id="trProd" onchange="trWhInfo()">${DB.get('products').map(p=>`<option value="${p.id}">${esc(p.name)}</option>`).join('')}</select></label><div id="trInfo" class="muted" style="font-size:12px"></div><label>${t('من','From')}<select id="trFrom">${whs.map(w=>`<option value="${w.id}">${esc(w.name)}</option>`).join('')}</select></label><label>${t('إلى','To')}<select id="trTo">${whs.map(w=>`<option value="${w.id}">${esc(w.name)}</option>`).join('')}</select></label><label>${t('الكمية','Qty')}<input id="trQty" type="number" value="1" min="1"></label></div>`, [{label:t('نقل','Transfer'),cls:'btn-primary',onClick:()=>{ const pid=$('#trProd').value; const from=$('#trFrom').value; const to=$('#trTo').value; const q=Math.floor(Number($('#trQty').value)||0); const products=DB.get('products'); const p=products.find(x=>x.id===pid); if(!p) return; if(from===to){ toast(t('اختر مخزنين مختلفين','Choose different warehouses')); return; } if(q<=0){ toast(t('الكمية يجب أن تكون أكبر من صفر','Qty must be > 0')); return; } if(whStock(p,from)<q){ toast(t('رصيد غير كافٍ في المصدر','Insufficient stock at source')); return; }
+  openModal(t('نقل بين المخازن','Transfer'), `<div class="form-grid"><label>${t('المنتج','Product')}<select id="trProd" onchange="trWhInfo()">${DB.get('products').map(p=>`<option value="${p.id}">${esc(p.name)}</option>`).join('')}</select></label><div id="trInfo" class="muted text-muted-sm"></div><label>${t('من','From')}<select id="trFrom">${whs.map(w=>`<option value="${w.id}">${esc(w.name)}</option>`).join('')}</select></label><label>${t('إلى','To')}<select id="trTo">${whs.map(w=>`<option value="${w.id}">${esc(w.name)}</option>`).join('')}</select></label><label>${t('الكمية','Qty')}<input id="trQty" type="number" value="1" min="1"></label></div>`, [{label:t('نقل','Transfer'),cls:'btn-primary',onClick:()=>{ const pid=$('#trProd').value; const from=$('#trFrom').value; const to=$('#trTo').value; const q=Math.floor(Number($('#trQty').value)||0); const products=DB.get('products'); const p=products.find(x=>x.id===pid); if(!p) return; if(from===to){ toast(t('اختر مخزنين مختلفين','Choose different warehouses')); return; } if(q<=0){ toast(t('الكمية يجب أن تكون أكبر من صفر','Qty must be > 0')); return; } if(whStock(p,from)<q){ toast(t('رصيد غير كافٍ في المصدر','Insufficient stock at source')); return; }
     adjStock(p,-q,from); adjStock(p,q,to); DB.set('products',products);
     const movements=DB.get('movements'); const fromName=(whs.find(w=>w.id===from)||{}).name; const toName=(whs.find(w=>w.id===to)||{}).name; movements.push({id:uid(),time:nowISO(),productId:pid,type:t('نقل','Transfer'),qty:q,wh:(fromName+' → '+toName)}); DB.set('movements',movements);
     logAudit(t('نقل مخزون','Stock transfer'), p.name+' ('+fromName+' → '+toName+', '+fmt(q)+')', {type:CFG.AUDIT.OTHER}); toast(t('تم النقل','Transferred')); closeModal(); renderInventory(); }},{label:t('إلغاء','Cancel'),cls:'btn',onClick:closeModal}]);
@@ -394,7 +419,7 @@ function bcKey(e){ if(e.metaKey||e.ctrlKey||e.altKey) return;
 let _idleTimer=null;
 function resetIdle(){ if(_idleTimer) clearTimeout(_idleTimer); const s=DB.getOne('settings')||{}; if(!s.pin) return; const mins=Number(s.autoLockMin)||5; _idleTimer=setTimeout(()=>{ const ov=$('#lockOverlay'); if(ov && !ov.classList.contains('hidden')) return; if($('#modalRoot')&&$('#modalRoot').childElementCount>0) return; showLock(renderShell); }, mins*60000); }
 function posRenderGrid(q){ q=q||$('#posProdSearch').value||''; const list=DB.get('products').filter(p=>p.status!=='inactive').filter(p=>!window._posFilter||p.category===window._posFilter).filter(p=>(!q)||(p.name||'').toLowerCase().includes(q.toLowerCase())||(p.barcode||'').includes(q));   $('#posGrid').innerHTML=list.map(p=>`<button class="pos-item${p.qty<=0?' out':''}" onclick="addToCart('${p.id}')"><div class="pi-name">${esc(p.name)}</div><div class="pi-price">${money(p.sellingPrice)}</div><div class="pi-qty">${t('متاح','Av')}: ${fmt(p.qty)}</div></button>`).join(''); }
-function addToCart(id){ const p=DB.get('products').find(x=>x.id===id); if(!p) return; const line=_cart.find(i=>i.id===id); const cur=line?line.qty:0; if((p.qty||0)<=cur){ toast(t('رصيد غير كافٍ','Insufficient stock')+': '+p.name); return; } if(line){ line.qty++; } else { _cart.push({id,code:p.code,name:p.name,buying:p.buyingPrice,selling:p.sellingPrice,qty:1,disc:Number(p.defaultDiscount)||0,tax:Number(p.tax)||0}); } renderCart(); }
+function addToCart(id){ const p=DB.get('products').find(x=>x.id===id); if(!p) return; const line=_cart.find(i=>i.id===id); const cur=line?line.qty:0; if((p.qty||0)<=cur){ toast(t('رصيد غير كافٍ','Insufficient stock')+': '+p.name); return; } if(line){ line.qty++; } else { _cart.push({id,code:p.code,name:p.name,buying:p.buyingPrice,selling:p.sellingPrice,qty:1,disc:Number(p.defaultDiscount)||0,tax:Number(p.tax)||0}); } renderCart(); try{ playAddSound(); }catch(e){} }
 function changeQty(id,d){ const l=_cart.find(i=>i.id===id); if(l){ l.qty+=d; if(l.qty<=0) _cart=_cart.filter(i=>i.id!==id); } renderCart(); }
 function setLineField(id,field,val){ const l=_cart.find(i=>i.id===id); if(l) l[field]=Number(val)||0; renderCart(); }
 function setInvDisc(v){ _invDisc=Number(v)||0; renderCart(); }
@@ -454,12 +479,99 @@ function renderSalesList(){ const invs=DB.get('invoices').filter(i=>i.type==='sa
   const netTotal=rows.reduce((s,r)=>s+r.total,0);
   const invTotal=invs.reduce((s,i)=>s+i.total,0);
   const retTotal=rets.reduce((s,r)=>s+r.total,0);
-  const body=rows.length?`<table class="tbl"><thead><tr><th>${t('الكود','Code')}</th><th>${t('العميل','Customer')}</th><th>${t('التاريخ','Date')}</th><th>${t('الإجمالي','Total')}</th><th>${t('المدفوع','Paid')}</th><th>${t('الدفع','Payment')}</th><th></th></tr></thead><tbody>${rows.map(r=>{ const isRet=r.kind==='ret';
-    return `<tr class="${isRet?'ret-row':''}"><td>${esc(r.code)}</td><td>${esc(r.customerName||'')}${isRet?`<div class="ret-tag">${t('مرتجع','Return')}</div>`:''}</td><td>${fmtDateTime(r.date)}</td><td class="${isRet?'neg':''}">${money(r.total)}</td><td>${money(r.paid)}</td><td>${isRet?`<span class="ret-tag">${t('مرتجع','Return')}</span>`:(r.payment==='credit'?t('آجل','Credit'):t('نقدي','Cash'))}</td><td>${isRet?`<button class="btn sm" onclick="printReturn(DB.get('returns').find(x=>x.id==='${r.id}'))">🖨️</button> <button class="btn sm btn-danger" onclick="deleteReturn('${r.id}')">🗑️</button>`:`<button class="btn sm" onclick="renderInvoiceScreen('sale','${r.id}')">📝</button> <button class="btn sm" onclick="shareInvoiceModal(DB.get('invoices').find(x=>x.id==='${r.id}'))">🖨️</button> <button class="btn sm btn-danger" onclick="deleteInvoice('${r.id}')">🗑️</button>`}</td></tr>`; }).join('')}</tbody></table>`:`<div class="empty">${t('لا توجد فواتير مبيعات بعد','No sales invoices yet')}</div>`;
+  const today=new Date().toISOString().slice(0,10);
+  const todaySales=invs.filter(i=>(i.createdAt||'').startsWith(today));
+  const todayTotal=todaySales.reduce((s,i)=>s+i.total,0);
+  const todayCount=todaySales.length;
+  const bento=`<div class="bento-grid"><div class="bento-card accent"><div class="bento-val">${money(todayTotal)}</div><div class="bento-lbl">${t('مبيعات اليوم','Today Sales')}</div></div><div class="bento-card"><div class="bento-val">${todayCount}</div><div class="bento-lbl">${t('فواتير اليوم','Today Invoices')}</div></div><div class="bento-card"><div class="bento-val">${rows.length}</div><div class="bento-lbl">${t('العدد في القائمة','List Count')}</div></div><div class="bento-card dark"><div class="bento-val">${money(netTotal)}</div><div class="bento-lbl">${t('إجمالي القائمة','List Total')}</div></div></div>`;
+  const body=rows.length?`<table class="tbl" id="salesTbl"><thead><tr><th><input type="checkbox" id="salesAll" onchange="toggleAllBulk('sales',this.checked)"></th><th onclick="sortSalesTable('code')">${t('الكود','Code')} ↕</th><th onclick="sortSalesTable('customer')">${t('العميل','Customer')} ↕</th><th onclick="sortSalesTable('date')">${t('التاريخ','Date')} ↕</th><th onclick="sortSalesTable('total')">${t('الإجمالي','Total')} ↕</th><th>${t('المدفوع','Paid')}</th><th>${t('الدفع','Payment')}</th><th></th></tr></thead><tbody>${rows.map(r=>{ const isRet=r.kind==='ret';
+    return `<tr class="${isRet?'ret-row':''}" data-id="${r.id}" data-kind="${r.kind}"><td><input type="checkbox" class="bulk-cb" value="${r.id}"></td><td>${esc(r.code)}</td><td>${esc(r.customerName||'')}${isRet?`<div class="ret-tag">${t('مرتجع','Return')}</div>`:''}</td><td>${fmtDateTime(r.date)}</td><td class="${isRet?'neg':''}">${money(r.total)}</td><td>${money(r.paid)}</td><td>${isRet?`<span class="ret-tag">${t('مرتجع','Return')}</span>`:(r.payment==='credit'?t('آجل','Credit'):t('نقدي','Cash'))}</td><td>${threeDotsMenu([
+      {icon:'📝',label:t('تعديل','Edit'),onClick:isRet?`deleteReturn('${r.id}')`:`renderInvoiceScreen('sale','${r.id}')`},
+      {icon:'🖨️',label:t('طباعة','Print'),onClick:isRet?`printReturn(DB.get('returns').find(x=>x.id==='${r.id}'))`:`printInvoice(DB.get('invoices').find(x=>x.id==='${r.id}'))`},
+      {icon:'📄',label:'PDF',onClick:isRet?'':`printInvoicePDF(DB.get('invoices').find(x=>x.id==='${r.id}'))`},
+      {icon:'🖼️',label:'JPG',onClick:isRet?'':`shareAsJPG('invShareArea','${r.code}')`},
+      {icon:'💬',label:'WhatsApp',onClick:isRet?'':`shareInvoiceWhatsApp(DB.get('invoices').find(x=>x.id==='${r.id}'))`},
+      {icon:'🗑️',label:t('حذف','Delete'),cls:'danger',onClick:isRet?`deleteReturn('${r.id}')`:`deleteInvoice('${r.id}')`}
+    ])}</td></tr>`; }).join('')}</tbody></table>`:`<div class="empty">${t('لا توجد فواتير مبيعات بعد','No sales invoices yet')}</div>`;
+  const bulkBar=`<div class="bulk-bar" id="salesBulkBar" style="display:none"><span id="salesBulkCount">0</span> ${t('محدد','selected')} <button class="btn btn-danger btn-sm" onclick="bulkDeleteSales()">🗑️ ${t('حذف','Delete')}</button> <button class="btn btn-sm" onclick="bulkExportSalesPDF()">📄 PDF</button> <button class="btn btn-sm" onclick="clearBulk('sales')">✕ ${t('إلغاء التحديد','Deselect')}</button></div>`;
+  const df=dateFilterPop('salesDate');
   $('#screen').innerHTML=`<div class="screen">${pageHead(t('المبيعات','Sales'),{icon:'🧾',sub:`${t('إجمالي المبيعات','Total Sales')}: ${money(invTotal)} · ${t('المرتجعات','Returns')}: ${money(retTotal)} · ${t('الصافي','Net')}: ${money(netTotal)}`,actions:`<button class="btn btn-primary" onclick="renderInvoiceScreen('sale')">＋ ${t('فاتورة جديدة','New Sale')}</button>`})}
+    ${bento}
+    <div class="filters"><div class="field-inline"><input id="salesSearch" placeholder="${t('بحث بالكود أو العميل','Search code or customer')}" oninput="filterSalesList()"><button class="voice-btn btn sm" onclick="startVoiceSearch('salesSearch')">🎤</button></div>${df}<button class="btn" onclick="exportSalesCSV()">📥 CSV</button><button class="btn" onclick="bulkExportSalesPDF()">📄 PDF</button></div>
+    ${bulkBar}
     ${panel({flush:true, body:body})}</div>`;
   applyLang(); }
-function printReturn(r){ if(!r) return; const comp=currentCompany()||{}; const s=DB.getOne('settings')||{}; const html=`<div class="receipt"><h3 class="r-title">${esc(comp.name||s.companyName||'')}</h3>${r.invoiceCode?`<div class="r-sub">${t('فاتورة أصلية','Original')}: ${esc(r.invoiceCode)}</div>`:''}<hr><div class="r-row"><span>${t('مرتجع','Return')}</span><span>${esc(r.code)}</span></div><div class="r-row"><span>${t('التاريخ','Date')}</span><span>${fmtDateTime(r.createdAt)}</span></div><hr>${r.items.map(it=>`<div class="r-item"><span>${esc((DB.get('products').find(p=>p.id===it.productId)||{}).name||'')} ×${it.qty}</span><span>${money(it.price*it.qty)}</span></div>`).join('')}<hr><div class="r-total"><span>${t('الإجمالي','Total')}</span><span>${money(r.total)}</span></div>${r.reason?`<div class="r-sub">${esc(r.reason)}</div>`:''}</div>`; const w=window.open('','_blank'); if(w){ w.document.write('<html><head><title>'+esc(r.code)+'</title><style>.receipt{width:80mm;max-width:80mm;margin:0 auto;padding:8px;font-family:"Courier New",monospace;font-size:12px;color:#000;background:#fff}.r-title{text-align:center;font-weight:800}.r-sub{text-align:center;font-size:11px}.r-row{display:flex;justify-content:space-between}.r-item{display:flex;justify-content:space-between}.r-total{display:flex;justify-content:space-between;font-weight:800}hr{border:none;border-top:1px dashed #999;margin:6px 0}</style></head><body>'+html+'</body></html>'); w.document.close(); } }
+function filterSalesList(){
+  const q=(($('#salesSearch').value||'').toLowerCase());
+  const dfEl=document.querySelector('[data-filter="salesDate"]');
+  const dateVal=dfEl?dfEl.value:'all';
+  const rows=document.querySelectorAll('#salesTbl tbody tr');
+  const now=new Date();
+  rows.forEach(r=>{
+    let show=true;
+    if(q){ const txt=r.textContent.toLowerCase(); if(!txt.includes(q)) show=false; }
+    if(show && dateVal && dateVal!=='all'){
+      const d=r.cells[3]?r.cells[3].textContent:'';
+      const rDate=new Date(d);
+      if(dateVal==='today') show=rDate.toDateString()===now.toDateString();
+      else if(dateVal==='yesterday'){ const y=new Date(now); y.setDate(y.getDate()-1); show=rDate.toDateString()===y.toDateString(); }
+      else if(dateVal==='thisMonth') show=rDate.getMonth()===now.getMonth()&&rDate.getFullYear()===now.getFullYear();
+    }
+    r.style.display=show?'':'none';
+  });
+}
+function sortSalesTable(col){
+  const tbl=document.getElementById('salesTbl'); if(!tbl) return;
+  const tbody=tbl.querySelector('tbody');
+  const arr=Array.from(tbody.querySelectorAll('tr'));
+  const idx={code:1,customer:2,date:3,total:4}[col]||1;
+  arr.sort((a,b)=>{
+    let va=a.cells[idx]?a.cells[idx].textContent.trim():'';
+    let vb=b.cells[idx]?b.cells[idx].textContent.trim():'';
+    if(col==='total') return parseFloat(va.replace(/[^0-9.\-]/g,''))-parseFloat(vb.replace(/[^0-9.\-]/g,''));
+    return va.localeCompare(vb,'ar');
+  });
+  arr.forEach(r=>tbody.appendChild(r));
+}
+function toggleAllBulk(screen,checked){
+  document.querySelectorAll('#'+screen+'Tbl .bulk-cb').forEach(cb=>{cb.checked=checked;});
+  updateBulkBar(screen);
+}
+function updateBulkBar(screen){
+  const checked=document.querySelectorAll('#'+screen+'Tbl .bulk-cb:checked').length;
+  const bar=document.getElementById(screen+'BulkBar');
+  const cnt=document.getElementById(screen+'BulkCount');
+  if(bar) bar.style.display=checked>0?'flex':'none';
+  if(cnt) cnt.textContent=checked;
+}
+function clearBulk(screen){
+  document.querySelectorAll('#'+screen+'Tbl .bulk-cb').forEach(cb=>{cb.checked=false;});
+  updateBulkBar(screen);
+}
+function bulkDeleteSales(){
+  const ids=Array.from(document.querySelectorAll('#salesTbl .bulk-cb:checked')).map(cb=>cb.value);
+  if(!ids.length) return;
+  confirmModal(t('حذف محدد','Delete Selected'),t('حذف '+ids.length+' فواتير؟','Delete '+ids.length+' invoices?'),()=>{
+    ids.forEach(id=>{ const inv=DB.get('invoices').find(x=>x.id===id); if(inv) reverseSale(inv); });
+    DB.set('invoices',DB.get('invoices').filter(i=>!ids.includes(i.id)));
+    logAudit(t('حذف محدد','Bulk Delete'),ids.length+' invoices');
+    renderSalesList(); toast(t('تم الحذف','Deleted'));
+  });
+}
+function bulkExportSalesPDF(){
+  const ids=Array.from(document.querySelectorAll('#salesTbl .bulk-cb:checked')).map(cb=>cb.value);
+  const invs=DB.get('invoices').filter(i=>ids.includes(i.id));
+  if(!invs.length){ toast(t('لا فواتير محددة','No invoices selected')); return; }
+  const lines=invs.map(i=>[i.code,i.customerName||'',fmtDateTime(i.createdAt),money(i.total),i.payment==='credit'?t('آجل','Credit'):t('نقدي','Cash')]);
+  exportPDF(t('المبيعات','Sales')+'.pdf',[t('الكود','Code'),t('العميل','Customer'),t('التاريخ','Date'),t('الإجمالي','Total'),t('الدفع','Payment')],lines);
+}
+function exportSalesCSV(){
+  const invs=DB.get('invoices').filter(i=>i.type==='sale');
+  const rows=[['code','customer','date','total','paid','payment']];
+  invs.forEach(i=>rows.push([i.code,i.customerName||'',(i.createdAt||'').slice(0,10),i.total,i.paid||0,i.payment]));
+  downloadFile('sales.csv',toCSV(rows),'text/csv');
+}
+function printReturn(r){ if(!r) return; const comp=currentCompany()||{}; const s=DB.getOne('settings')||{}; const html=`<div class="receipt"><h3 class="r-title">${esc(comp.name||s.companyName||'')}</h3>${r.invoiceCode?`<div class="r-sub">${t('فاتورة أصلية','Original')}: ${esc(r.invoiceCode)}</div>`:''}<hr><div class="r-row"><span>${t('مرتجع','Return')}</span><span>${esc(r.code)}</span></div><div class="r-row"><span>${t('التاريخ','Date')}</span><span>${fmtDateTime(r.createdAt)}</span></div><hr>${r.items.map(it=>`<div class="r-item"><span>${esc((DB.get('products').find(p=>p.id===it.productId)||{}).name||'')} ×${it.qty}</span><span>${money(it.price*it.qty)}</span></div>`).join('')}<hr><div class="r-total"><span>${t('الإجمالي','Total')}</span><span>${money(r.total)}</span></div>${r.reason?`<div class="r-sub">${esc(r.reason)}</div>`:''}</div>`; const w=window.open('','_blank'); if(w){ w.document.write('<html><head><title>'+esc(r.code)+'</title><link rel="stylesheet" href="print.css"></head><body>'+html+'</body></html>'); w.document.close(); } }
 function deleteReturn(id){ confirmModal(t('حذف المرتجع','Delete Return'), t('حذف المرتجع وترحيل العكس؟','Delete return and reverse?'), ()=>{ const r=DB.get('returns').find(x=>x.id===id); if(!r) return; const products=DB.get('products'); (r.items||[]).forEach(it=>{ const p=products.find(x=>x.id===it.productId); if(p) adjStock(p,-it.qty, inv?inv.warehouseId:null); }); DB.set('products',products); DB.set('journal',DB.get('journal').filter(j=>j.ref!==id)); DB.set('returns',DB.get('returns').filter(x=>x.id!==id)); const orig=DB.get('invoices').find(x=>x.id===r.invoiceId); if(orig&&orig.payment==='credit'){ const customers=DB.get('customers'); const c=customers.find(x=>x.id===r.customerId); if(c){ c.balance=(c.balance||0)+(r.total||0); } DB.set('customers',customers); } logAudit(t('حذف مرتجع','Delete return'),r.code); renderSalesList(); toast(t('تم الحذف','Deleted')); }); }
 function deleteInvoice(id){ confirmModal(t('حذف الفاتورة','Delete Invoice'), t('هل تريد حذف الفاتورة وترحيل الفارق؟','Delete invoice and reverse its effects?'), ()=>{ const inv=DB.get('invoices').find(x=>x.id===id); if(!inv) return; const products=DB.get('products'); (inv.items||[]).forEach(it=>{ const p=products.find(x=>x.id===it.productId); if(p) adjStock(p,it.qty, inv?inv.warehouseId:null); }); DB.set('products',products); DB.set('journal',DB.get('journal').filter(j=>j.ref!==id));     DB.set('invoices',DB.get('invoices').filter(x=>x.id!==id)); const customers=DB.get('customers'); const cust=customers.find(c=>c.id===inv.customerId); if(cust&&inv.payment==='credit'){ cust.balance=DEC.sub(cust.balance||0, DEC.sub(inv.total||0, inv.paid||0)); DB.set('customers',customers); } logAudit(t('حذف فاتورة','Delete invoice'), inv.code, {type:CFG.AUDIT.DELETE, ref:id}); renderSalesList(); toast(t('تم الحذف','Deleted')); }); }
 function reverseSale(inv){ const products=DB.get('products'); (inv.items||[]).forEach(it=>{ const p=products.find(x=>x.id===it.productId); if(p) adjStock(p,it.qty, inv?inv.warehouseId:null); }); DB.set('products',products); DB.set('journal',DB.get('journal').filter(j=>j.ref!==inv.id)); const customers=DB.get('customers'); const cust=customers.find(c=>c.id===inv.customerId); if(cust&&inv.payment==='credit'){ cust.balance=(cust.balance||0)-((inv.total||0)-(inv.paid||0)); DB.set('customers',customers); } }
@@ -473,38 +585,10 @@ function postSaleJournals(inv, credit){ const J=DB.get('journal'); const d=new D
   J.push({id:uid(),date:d,desc:t('بيع','Sale')+' '+inv.code,lines:normalizeLines(lines),ref:inv.id}); DB.set('journal',J);
   const cogsLines=inv.items.map(it=>{ const used=consumeCostLayers(it.productId,it.qty,productCostMethod(it.productId)); return {accountId:cogs, debit:Math.max(0,used), credit:0, _cogs:used}; }); const cogsTotal=DEC.sum(cogsLines,'_cogs'); cogsLines.push({accountId:invAcc, debit:0, credit:cogsTotal}); J.push({id:uid(),date:d,desc:t('تكلفة بيع','COGS')+' '+inv.code,lines:normalizeLines(cogsLines),ref:inv.id}); DB.set('journal',J); }
 function normalizeLines(lines){ const m={}; lines.forEach(l=>{ m[l.accountId]=m[l.accountId]||{accountId:l.accountId,debit:0,credit:0}; m[l.accountId].debit=DEC.add(m[l.accountId].debit, l.debit); m[l.accountId].credit=DEC.add(m[l.accountId].credit, l.credit); }); return Object.values(m); }
-function receiptHTML(inv){ const comp=currentCompany()||{}; const s=DB.getOne('settings')||{}; const logo=s.logo||comp.logo||''; const taxNo=s.taxNumber||comp.taxNo||''; const cust=DB.get('customers').find(c=>c.id===inv.customerId); const phone=cust?c.phone:''; return `<div class="receipt">
-  ${logo?`<div class="r-logo"><img src="${logo}" alt="logo"></div>`:''}
-  <h3 class="r-title">${esc(comp.name||s.companyName||'')}</h3>
-  ${comp.address?`<div class="r-sub">${esc(comp.address)}</div>`:''}
-  ${taxNo?`<div class="r-sub">${t('الرقم الضريبي','Tax No')}: ${esc(taxNo)}</div>`:''}
-  <hr>
-  <div class="r-row"><span>${t('فاتورة','Invoice')}</span><span>${esc(inv.code)}</span></div>
-  <div class="r-row"><span>${t('التاريخ','Date')}</span><span>${fmtDateTime(inv.createdAt)}</span></div>
-  <div class="r-row"><span>${t('العميل','Customer')}</span><span>${esc(inv.customerName||'—')}</span></div>
-  ${phone?`<div class="r-row"><span>${t('الهاتف','Phone')}</span><span>${esc(phone)}</span></div>`:''}
-  ${inv.payment==='credit'?`<div class="r-row"><span>${t('الدفع','Payment')}</span><span>${t('آجل','Credit')}</span></div>`:''}
-  <hr>
-  <div class="r-item r-head"><span>${t('الصنف','Item')}</span><span>${t('كمية','Qty')} × ${t('سعر','Price')}</span><span>${t('إجمالي','Total')}</span></div>
-  ${inv.items.map(i=>`<div class="r-item"><span>${esc(i.name)}</span><span>${fmt(i.qty)} × ${money(i.price)}</span><span>${money((i.price||0)*(i.qty||0))}</span></div>`).join('')}
-  <hr>
-  <div class="r-row"><span>${t('المجموع الفرعي','Subtotal')}</span><span>${money(inv.subtotal)}</span></div>
-  ${inv.discount?`<div class="r-row"><span>${t('خصم','Discount')}</span><span>${money(inv.discount)}</span></div>`:''}
-  ${inv.tax?`<div class="r-row"><span>${t('ضريبة','Tax')}</span><span>${money(inv.tax)}</span></div>`:''}
-  <div class="r-total"><span>${t('الإجمالي','Total')}</span><span>${money(inv.total)}</span></div>
-  <div class="r-row"><span>${t('المدفوع','Paid')}</span><span>${money(inv.paid)}</span></div>
-  ${inv.payment==='credit'?`<div class="r-row"><span>${t('المتبقي','Remaining')}</span><span>${money((inv.remaining!=null?inv.remaining:Math.max(0,(inv.total||0)-(inv.paid||0))))}</span></div>`:''}
-  <div class="r-row"><span>${t('الباقي','Change')}</span><span>${money(inv.change)}</span></div>
-  <hr>
-  <div class="r-qr">${qrSVG(inv.code)}</div>
-  ${inv.barcode||(inv.items[0]&&inv.items[0].code)?`<div class="r-barcode">${barSVG(inv.barcode||(inv.items[0]&&inv.items[0].code))}</div>`:''}
-  ${s.receiptNote?`<div class="r-sub r-foot">${esc(s.receiptNote)}</div>`:''}
-`;
-}
-function printInvoice(inv){ const html=receiptHTML(inv); const w=window.open('','_blank'); if(w){ w.document.write('<html><head><title>'+esc(inv.code)+'</title><style>@page{size:80mm auto;margin:0}*{box-sizing:border-box}.receipt{width:80mm;max-width:80mm;margin:0 auto;padding:8px 6px;font-family:"Courier New",monospace;font-size:12px;color:#000;background:#fff}.r-logo{text-align:center;margin-bottom:4px}.r-logo img{max-height:54px;max-width:170px;object-fit:contain}.r-title{text-align:center;margin:2px 0;font-size:15px;font-weight:800}.r-sub{text-align:center;font-size:11px;margin:1px 0}.r-row{display:flex;justify-content:space-between;margin:2px 0}.r-item{display:flex;justify-content:space-between;margin:2px 0}.r-item.r-head{font-weight:700;border-bottom:1px dotted #999;padding-bottom:2px}.r-total{display:flex;justify-content:space-between;font-weight:800;font-size:14px;margin:3px 0}.r-qr{text-align:center;margin:6px 0}.r-barcode{text-align:center;margin:4px 0}.r-barcode svg{width:160px;height:46px}.r-foot{margin-top:4px;border-top:1px dashed #999;padding-top:4px}hr{border:none;border-top:1px dashed #999;margin:6px 0}</style></head><body>'+html+'<script>window.onload=function(){setTimeout(function(){window.print();},120);}<\/script></body></html>'); w.document.close(); } }
+function printInvoice(inv){ const html=receiptHTML(inv); const w=window.open('','_blank'); if(w){ w.document.write('<html><head><title>'+esc(inv.code)+'</title><link rel="stylesheet" href="print.css"></head><body>'+html+'<script>window.onload=function(){setTimeout(function(){window.print();},120);}<\/script></body></html>'); w.document.close(); } }
 function printInvoicePDF(inv){ try{ const doc=pdfDoc(); const W=80; doc.internal.pageSize.setSize(W, 297); let y=10; const L=4; doc.setFontSize(9); const line=(t,x)=>{ doc.text(String(t),x==null?L:x,y); y+=4.4; }; const comp=currentCompany()||{}; const s=DB.getOne('settings')||{}; line(comp.name||s.companyName||'',L); (comp.address?line(comp.address,L):0); const taxNo=s.taxNumber||comp.taxNo||''; if(taxNo) line(t('الرقم الضريبي','Tax No')+': '+taxNo,L); y+=2; line(t('فاتورة','Invoice')+': '+inv.code,L); line(t('التاريخ','Date')+': '+fmtDateTime(inv.createdAt),L); line(t('العميل','Customer')+': '+(inv.customerName||'—'),L); y+=2; (inv.items||[]).forEach(i=>{ line(esc(i.name),L); line('  '+fmt(i.qty)+' x '+money(i.price)+' = '+money((i.price||0)*(i.qty||0)),L); }); y+=2; if(inv.subtotal) line(t('المجموع الفرعي','Subtotal')+': '+money(inv.subtotal),L); if(inv.discount) line(t('خصم','Discount')+': '+money(inv.discount),L); if(inv.tax) line(t('ضريبة','Tax')+': '+money(inv.tax),L); line(t('الإجمالي','Total')+': '+money(inv.total),L); line(t('المدفوع','Paid')+': '+money(inv.paid),L); if(inv.payment==='credit') line(t('المتبقي','Remaining')+': '+money(inv.remaining!=null?inv.remaining:Math.max(0,(inv.total||0)-(inv.paid||0))),L); doc.save(inv.code+'.pdf'); }catch(e){ toast(t('تعذر إنشاء PDF','PDF failed')); } }
 function shareInvoiceWhatsApp(inv){ const cust=DB.get('customers').find(c=>c.id===inv.customerId); const lines=[t('فاتورة','Invoice')+': '+inv.code+' — '+money(inv.total)]; (inv.items||[]).forEach(i=>lines.push('• '+i.name+' ('+fmt(i.qty)+' × '+money(i.price)+')')); if(cust&&cust.phone) lines.unshift(t('عميل','Customer')+': '+cust.name); const url='https://wa.me/'+encodeURIComponent((cust&&cust.phone||'').replace(/[^0-9]/g,''))+'?text='+encodeURIComponent(lines.join('\n')); window.open(url,'_blank'); }
-function shareInvoiceModal(inv){ openModal(t('مشاركة الفاتورة','Share Invoice')+' '+esc(inv.code), `<p>${t('اختر طريقة المشاركة','Choose how to share')}</p>`, [{label:t('طباعة','Print'),cls:'btn',onClick:()=>{closeModal();printInvoice(inv);}},{label:'PDF',cls:'btn',onClick:()=>{closeModal();printInvoicePDF(inv);}},{label:'WhatsApp',cls:'btn-primary',onClick:()=>{closeModal();shareInvoiceWhatsApp(inv);}}]); }
+function shareInvoiceModal(inv){ openModal(t('مشاركة الفاتورة','Share Invoice')+' '+esc(inv.code), `<p>${t('اختر طريقة المشاركة','Choose how to share')}</p>`, [{label:t('طباعة','Print'),cls:'btn',onClick:()=>{closeModal();printInvoice(inv);}},{label:'PDF',cls:'btn',onClick:()=>{closeModal();printInvoicePDF(inv);}},{label:'🖼️ JPG',cls:'btn',onClick:()=>{closeModal();shareAsJPG('invShareArea',inv.code);}},{label:'🖨️ '+t('بلوتوث','Bluetooth'),cls:'btn',onClick:()=>{closeModal();printInvoiceBT(inv);}},{label:'WhatsApp',cls:'btn-primary',onClick:()=>{closeModal();shareInvoiceWhatsApp(inv);}}]); }
 function renderReturns(){ const invs=DB.get('invoices').filter(i=>i.type==='sale').slice().sort((a,b)=>(b.createdAt||'').localeCompare(a.createdAt||'')); const rets=DB.get('returns').slice().sort((a,b)=>(b.createdAt||'').localeCompare(a.createdAt||''));
   $('#screen').innerHTML=`<div class="screen">${pageHead(t('المرتجعات','Returns'),{icon:'↩️',sub:t('إدارة مرتجعات المبيعات','Manage sales returns')})}
     <div class="section-title">${t('سجل المرتجعات','Returns Log')}</div>
@@ -523,8 +607,76 @@ function openReturn(id){ const inv=DB.get('invoices').find(x=>x.id===id); if(!in
     J.push({id:uid(),date:d,desc:t('مرتجع','Return')+' '+inv.code,lines:normalizeLines(lines),ref:ret.id});
     DB.set('journal',J); logAudit(t('مرتجع','Return'),inv.code); closeModal(); renderReturns(); toast(t('تم المرتجع','Returned')); }},{label:t('إلغاء','Cancel'),cls:'btn',onClick:closeModal}]); }
 /* ============================ PURCHASES ============================ */
-function renderPurchases(){ const list=DB.get('purchases'); const total=list.reduce((s,p)=>s+(p.total||0),0); $('#screen').innerHTML=`<div class="screen">${pageHead(t('المشتريات','Purchases'),{icon:'🛒',sub:`${t('إجمالي المشتريات','Total Purchases')}: ${money(total)} · ${t('العدد','Count')}: ${list.length}`,actions:`<button class="btn btn-primary" onclick="renderInvoiceScreen('purchase')">＋ ${t('فاتورة شراء','New Purchase')}</button>`})}
-  ${panel({flush:true, body: list.length?`<table class="tbl"><thead><tr><th>${t('الكود','Code')}</th><th>${t('المورد','Supplier')}</th><th>${t('الإجمالي','Total')}</th><th>${t('التاريخ','Date')}</th><th></th></tr></thead><tbody>${list.map(p=>`<tr><td>${esc(p.code)}</td><td>${esc(p.supplierName)}</td><td>${money(p.total)}</td><td>${fmtDate(p.createdAt)}</td><td><button class="btn sm" onclick="renderInvoiceScreen('purchase','${p.id}')">📝</button> <button class="btn sm btn-danger" onclick="deletePurchase('${p.id}')">🗑️</button></td></tr>`).join('')}</tbody></table>`:`<div class="empty">${t('لا فواتير شراء','No purchases')}</div>`})}</div>`; applyLang(); }
+function renderPurchases(){ const list=DB.get('purchases'); const total=list.reduce((s,p)=>s+(p.total||0),0);
+  const today=new Date().toISOString().slice(0,10);
+  const todayPurchases=list.filter(p=>(p.createdAt||'').startsWith(today));
+  const todayTotal=todayPurchases.reduce((s,p)=>s+(p.total||0),0);
+  const todayCount=todayPurchases.length;
+  const bento=`<div class="bento-grid"><div class="bento-card accent"><div class="bento-val">${money(todayTotal)}</div><div class="bento-lbl">${t('مشتريات اليوم','Today Purchases')}</div></div><div class="bento-card"><div class="bento-val">${todayCount}</div><div class="bento-lbl">${t('فواتير اليوم','Today Invoices')}</div></div><div class="bento-card"><div class="bento-val">${list.length}</div><div class="bento-lbl">${t('العدد في القائمة','List Count')}</div></div><div class="bento-card dark"><div class="bento-val">${money(total)}</div><div class="bento-lbl">${t('إجمالي القائمة','List Total')}</div></div></div>`;
+  const body=list.length?`<table class="tbl" id="purchaseTbl"><thead><tr><th><input type="checkbox" id="purchaseAll" onchange="toggleAllBulk('purchase',this.checked)"></th><th onclick="sortTable('purchaseTbl',1)">${t('الكود','Code')} ↕</th><th onclick="sortTable('purchaseTbl',2)">${t('المورد','Supplier')} ↕</th><th onclick="sortTable('purchaseTbl',3)">${t('الإجمالي','Total')} ↕</th><th onclick="sortTable('purchaseTbl',4)">${t('التاريخ','Date')} ↕</th><th></th></tr></thead><tbody>${list.map(p=>`<tr data-id="${p.id}"><td><input type="checkbox" class="bulk-cb" value="${p.id}"></td><td>${esc(p.code)}</td><td>${esc(p.supplierName)}</td><td>${money(p.total)}</td><td>${fmtDate(p.createdAt)}</td><td>${threeDotsMenu([
+    {icon:'📝',label:t('تعديل','Edit'),onClick:`renderInvoiceScreen('purchase','${p.id}')`},
+    {icon:'🖨️',label:t('طباعة','Print'),onClick:`printInvoice(DB.get('purchases').find(x=>x.id==='${p.id}'))`},
+    {icon:'📄',label:'PDF',onClick:`printInvoicePDF(DB.get('purchases').find(x=>x.id==='${p.id}'))`},
+    {icon:'🖨️',label:'BT',onClick:`printPurchaseBt('${p.id}')`},
+    {icon:'🗑️',label:t('حذف','Delete'),cls:'danger',onClick:`deletePurchase('${p.id}')`}
+  ])}</td></tr>`).join('')}</tbody></table>`:`<div class="empty">${t('لا فواتير شراء','No purchases')}</div>`;
+  const bulkBar=`<div class="bulk-bar" id="purchaseBulkBar" style="display:none"><span id="purchaseBulkCount">0</span> ${t('محدد','selected')} <button class="btn btn-danger btn-sm" onclick="bulkDeletePurchases()">🗑️ ${t('حذف','Delete')}</button> <button class="btn btn-sm" onclick="bulkExportPurchasesPDF()">📄 PDF</button> <button class="btn btn-sm" onclick="clearBulk('purchase')">✕ ${t('إلغاء التحديد','Deselect')}</button></div>`;
+  const df=dateFilterPop('purchaseDate');
+  $('#screen').innerHTML=`<div class="screen">${pageHead(t('المشتريات','Purchases'),{icon:'🛒',sub:`${t('إجمالي المشتريات','Total Purchases')}: ${money(total)} · ${t('العدد','Count')}: ${list.length}`,actions:`<button class="btn btn-primary" onclick="renderInvoiceScreen('purchase')">＋ ${t('فاتورة شراء','New Purchase')}</button>`})}
+    ${bento}
+    <div class="filters"><div class="field-inline"><input id="purchaseSearch" placeholder="${t('بحث بالكود أو المورد','Search code or supplier')}" oninput="filterPurchasesList()"><button class="voice-btn btn sm" onclick="startVoiceSearch('purchaseSearch')">🎤</button></div>${df}<button class="btn" onclick="exportPurchasesCSV()">📥 CSV</button></div>
+    ${bulkBar}
+    ${panel({flush:true, body})}</div>`; applyLang(); }
+function filterPurchasesList(){
+  const q=(($('#purchaseSearch').value||'').toLowerCase());
+  const dfEl=document.querySelector('[data-filter="purchaseDate"]');
+  const dateVal=dfEl?dfEl.value:'all';
+  const rows=document.querySelectorAll('#purchaseTbl tbody tr');
+  const now=new Date();
+  rows.forEach(r=>{
+    let show=true;
+    if(q){ const txt=r.textContent.toLowerCase(); if(!txt.includes(q)) show=false; }
+    if(show && dateVal && dateVal!=='all'){
+      const d=r.cells[4]?r.cells[4].textContent:'';
+      const rDate=new Date(d);
+      if(dateVal==='today') show=rDate.toDateString()===now.toDateString();
+      else if(dateVal==='yesterday'){ const y=new Date(now); y.setDate(y.getDate()-1); show=rDate.toDateString()===y.toDateString(); }
+      else if(dateVal==='thisMonth') show=rDate.getMonth()===now.getMonth()&&rDate.getFullYear()===now.getFullYear();
+    }
+    r.style.display=show?'':'none';
+  });
+}
+function sortTable(tblId,colIdx){
+  const tbl=document.getElementById(tblId); if(!tbl) return;
+  const tbody=tbl.querySelector('tbody');
+  const arr=Array.from(tbody.querySelectorAll('tr'));
+  arr.sort((a,b)=>{
+    let va=a.cells[colIdx]?a.cells[colIdx].textContent.trim():'';
+    let vb=b.cells[colIdx]?b.cells[colIdx].textContent.trim():'';
+    if(colIdx===3) return parseFloat(va.replace(/[^0-9.\-]/g,''))-parseFloat(vb.replace(/[^0-9.\-]/g,''));
+    return va.localeCompare(vb,'ar');
+  });
+  arr.forEach(r=>tbody.appendChild(r));
+}
+function bulkDeletePurchases(){
+  const ids=Array.from(document.querySelectorAll('#purchaseTbl .bulk-cb:checked')).map(cb=>cb.value);
+  if(!ids.length) return;
+  confirmModal(t('حذف محدد','Delete Selected'),t('حذف '+ids.length+' فواتير شراء؟','Delete '+ids.length+' purchase invoices?'),()=>{
+    ids.forEach(id=>{ const p=DB.get('purchases').find(x=>x.id===id); if(p) reversePurchase(p); });
+    DB.set('purchases',DB.get('purchases').filter(p=>!ids.includes(p.id)));
+    logAudit(t('حذف محدد','Bulk Delete'),ids.length+' purchases');
+    renderPurchases(); toast(t('تم الحذف','Deleted'));
+  });
+}
+function bulkExportPurchasesPDF(){
+  const ids=Array.from(document.querySelectorAll('#purchaseTbl .bulk-cb:checked')).map(cb=>cb.value);
+  const list=DB.get('purchases').filter(p=>ids.includes(p.id));
+  if(!list.length){ toast(t('لا فواتير محددة','No purchases selected')); return; }
+  const lines=list.map(p=>[p.code,p.supplierName||'',fmtDate(p.createdAt),money(p.total)]);
+  exportPDF(t('المشتريات','Purchases')+'.pdf',[t('الكود','Code'),t('المورد','Supplier'),t('التاريخ','Date'),t('الإجمالي','Total')],lines);
+}
+function exportPurchasesCSV(){ const rows=[['code','supplier','total','date']]; DB.get('purchases').forEach(p=>rows.push([p.code,p.supplierName||'',p.total,(p.createdAt||'').slice(0,10)])); downloadFile('purchases.csv',toCSV(rows),'text/csv'); }
+function printPurchaseBt(id){ const p=DB.get('purchases').find(x=>x.id===id); if(p) printInvoiceBT(p); }
 function renderPurchaseOrders(){ const orders=DB.get('purchaseOrders'); $('#screen').innerHTML=`<div class="screen">${pageHead(t('أوامر الشراء','Purchase Orders'),{icon:'📋',sub:`${t('العدد','Count')}: ${orders.length}`,actions:`<button class="btn btn-primary" onclick="renderInvoiceScreen('po')">＋ ${t('أمر شراء','New PO')}</button>`})}
   ${panel({flush:true, body: orders.length?`<table class="tbl"><thead><tr><th>${t('الكود','Code')}</th><th>${t('المورد','Supplier')}</th><th>${t('الحالة','Status')}</th><th>${t('التاريخ','Date')}</th><th></th></tr></thead><tbody>${orders.map(o=>`<tr><td>${esc(o.code)}</td><td>${esc(o.supplierName)}</td><td>${esc(o.status)}</td><td>${fmtDate(o.createdAt)}</td><td><button class="btn sm" onclick="receivePO('${o.id}')">${t('استلام','Receive')}</button> <button class="btn sm btn-danger" onclick="deletePO('${o.id}')">🗑️</button></td></tr>`).join('')}</tbody></table>`:`<div class="empty">${t('لا أوامر شراء','No POs')}</div>`})}</div>`; applyLang(); }
 function receivePO(id){ const o=DB.get('purchaseOrders').find(x=>x.id===id); if(!o) return; renderInvoiceScreen('purchase'); setTimeout(()=>{ const sel=$('#invParty'); if(sel) sel.value=o.supplierName||''; invSetParty('invParty','invPartyId','suppliers'); },50); toast(t('أدخل فاتورة الشراء للأمر','Create purchase invoice for PO')+' '+o.code); }
@@ -717,7 +869,6 @@ function runReport(){
   applyLang();
 }
 function slug(s){ return String(s||'report').replace(/[^a-zA-Z0-9_\u0600-\u06FF]/g,'_'); }
-function tableToExcel(title,headers,rows){ const e2=v=>String(v==null?'':v).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); const t=`<table border="1" cellspacing="0" cellpadding="4" style="border-collapse:collapse;font-family:Tahoma"><thead><tr style="background:#3b5bdb;color:#fff">${headers.map(h=>`<th>${e2(h)}</th>`).join('')}</tr></thead><tbody>${rows.map(r=>`<tr>${r.map(c=>`<td>${e2(c)}</td>`).join('')}</tr>`).join('')}</tbody></table>`; return `<html dir="${LANG==='en'?'ltr':'rtl'}"><head><meta charset="utf-8"></head><body><h3>${e2(title)}</h3>${t}<p>${e2(new Date().toLocaleString())}</p></body></html>`; }
 function exportReport(kind){ const d=window._reportData; if(!d||!d.rows){ toast(t('لا بيانات','No data')); return; }
   if(kind==='csv'){ downloadFile(slug(d.title)+'.csv','\uFEFF'+toCSV([d.headers].concat(d.rows)),'text/csv;charset=utf-8'); toast(t('تم التصدير','Exported')); }
   else if(kind==='excel'){ downloadFile(slug(d.title)+'.xls',tableToExcel(d.title,d.headers,d.rows),'application/vnd.ms-excel'); toast(t('تم التصدير','Exported')); }
@@ -739,7 +890,7 @@ function reportSalesAnalysis(){ const invs=DB.get('invoices').filter(i=>i.type==
       <div class="kpi"><span>${t('مبيعات اليوم','Today')}</span><b>${money(todayTot)}</b></div>
       <div class="kpi"><span>${t('مبيعات الشهر','This Month')}</span><b>${money(thisMonth)}</b></div>
       <div class="kpi"><span>${t('الشهر الماضي','Last Month')}</span><b>${money(lastMonth)}</b></div>
-      <div class="kpi"><span>${t('نمو المبيعات (شهر/شهر)','MoM Growth')}</span><b style="color:${growth>=0?'green':'#c0392b'}">${growth>=0?'▲':'▼'} ${fmt(growth)}%</b></div>
+      <div class="kpi"><span>${t('نمو المبيعات (شهر/شهر)','MoM Growth')}</span><b class="${growth>=0?'text-pos':'text-neg'}">${growth>=0?'▲':'▼'} ${fmt(growth)}%</b></div>
       <div class="kpi"><span>${t('اليوم مقابل نظيره بالشهر الماضي','Today vs Last Month Day')}</span><b>${money(lastMonthDay)}</b></div>
     </div>
     <div class="report-grid"><button class="report-card" onclick="renderReports()">${t('التقارير','Reports')}</button></div></div>`; applyLang(); }
@@ -756,7 +907,7 @@ function renderSettings(){ const s=DB.getOne('settings')||{}; const comp=current
     <div class="form-grid">
       <label>${t('اسم الشركة','Company')}<input id="setComp" value="${esc(s.companyName||'')}"></label>
       <label>${t('الرقم الضريبي','Tax Number')}<input id="setTaxNo" value="${esc(s.taxNumber||comp.taxNo||'')}"></label>
-      <label>${t('شعار المتجر (صورة)','Store Logo')}<input type="file" id="setLogo" accept="image/*" onchange="uploadLogo(this)"> ${s.logo?`<img id="logoPrev" src="${esc(s.logo)}" style="height:38px;margin-right:6px;vertical-align:middle">`:''}<input type="hidden" id="setLogoData" value="${esc(s.logo||'')}"></label>
+      <label>${t('شعار المتجر (صورة)','Store Logo')}<input type="file" id="setLogo" accept="image/*" onchange="uploadLogo(this)"> ${s.logo?`<img id="logoPrev" src="${esc(s.logo)}" class="logo-prev">`:''}<input type="hidden" id="setLogoData" value="${esc(s.logo||'')}"></label>
     </div>
   </div>
   <div class="set-section">
@@ -778,7 +929,7 @@ function renderSettings(){ const s=DB.getOne('settings')||{}; const comp=current
     <div class="form-grid">
       <label>${t('رمز قفل التطبيق','App Lock PIN')}<input id="setPin" type="password" value="${esc(s.pin||'')}" placeholder="••••"></label>
       <label>${t('قفل تلقائي بعد (دقيقة)','Auto Lock (min)')}<input id="setAutoLock" type="number" value="${s.autoLockMin||5}"></label>
-      <div class="set-actions" style="margin:0">
+      <div class="set-actions m-0">
         <button class="btn" onclick="openUserModal()">${t('إضافة مستخدم','Add User')}</button>
         <span class="notify-dot ${s.notifications?'on':''}"></span>
         <button class="btn" onclick="enableNotifications()">${t('تفعيل الإشعارات','Enable Notifications')}</button>
@@ -800,13 +951,29 @@ function renderSettings(){ const s=DB.getOne('settings')||{}; const comp=current
       <button class="btn" onclick="syncPull()">${t('سحب من الخادم','Pull from Server')}</button>
       <span class="sync-status"></span>
     </div>
-    <div class="set-actions" style="margin-top:10px">
+    <div class="set-actions mt-sm">
       <button class="btn" onclick="Backup.download()">⬇️ ${t('تصدير نسخة احتياطية','Export Backup')}</button>
       <button class="btn" onclick="Backup.pickAndImport()">⬆️ ${t('استيراد نسخة','Import Backup')}</button>
     </div>
-    <div class="form-grid" style="margin-top:10px">
+    <div class="form-grid mt-sm">
       <label>${t('نسخ احتياطي تلقائي كل (ساعة)','Auto backup every (hours)')}<input id="setAutoBackup" type="number" min="0" value="${s.autoBackupHours||0}" placeholder="0 = ${t('معطّل','off')}"></label>
       <span class="muted">${t('آخر نسخة','Last backup')}: ${s.lastBackup?fmtDateTime(s.lastBackup):t('لم يُعمل بعد','never')}</span>
+    </div>
+    <div class="form-grid mt-sm">
+      <label>${t('Firebase API Key')}<input id="setFBKey" value="${esc((s.firebaseConfig||{}).apiKey||'')}" placeholder="AIza..."></label>
+      <label>${t('Firebase Project ID')}<input id="setFBProj" value="${esc((s.firebaseConfig||{}).projectId||'')}" placeholder="my-project"></label>
+    </div>
+  </div>
+  <div class="set-section">
+    <div class="section-title">${t('الأدوات','Tools')}</div>
+    <p class="set-desc">${t('تخصيص الواجهة وطباعة بلوتوث والحساب السحابي','UI customization, Bluetooth print, cloud login')}</p>
+    <div class="set-actions">
+      <button class="btn" onclick="toggleFocusMode()">🎨 ${t('تخصيص الواجهة','Focus Mode')}</button>
+      <button class="btn btn-danger" onclick="resetAllUICustomizations()">⟲ ${t('إعادة الواجهة الأصلية','Reset UI to Default')}</button>
+      <button class="btn" onclick="connectBluetooth()">🖨️ ${t('طباعة بلوتوث','Bluetooth Print')}</button>
+      <button class="btn" onclick="firebaseLogin()">☁️ ${t('دخول سحابي','Cloud Login')}</button>
+      <button class="btn" onclick="firebasePush()">⬆️ ${t('رفع سحابي','Cloud Push')}</button>
+      <button class="btn" onclick="firebasePull()">⬇️ ${t('سحب سحابي','Cloud Pull')}</button>
     </div>
   </div>
   <div class="set-section">
@@ -817,13 +984,13 @@ function renderSettings(){ const s=DB.getOne('settings')||{}; const comp=current
     </div>
   </div>
   <div class="set-users">
-    <div class="section-title" style="margin-top:0">${t('المستخدمون','Users')}</div>
+    <div class="section-title mt-0">${t('المستخدمون','Users')}</div>
     <table class="tbl"><thead><tr><th>${t('الاسم','Name')}</th><th>${t('الدور','Role')}</th><th></th></tr></thead><tbody>${DB.get('users').map(u=>`<tr><td>${esc(u.name)}</td><td>${roleLabel(u.role)}</td><td><button class="btn btn-danger" onclick="deleteUser('${u.id}')">${t('حذف','Delete')}</button></td></tr>`).join('')}</tbody></table>
   </div>
   <button class="btn btn-primary" onclick="saveSettings()">${t('حفظ','Save')}</button>
   </div>`; applyLang(); bindSettingsAutosave(); }
 function uploadLogo(input){ const f=input.files&&input.files[0]; if(!f) return; const r=new FileReader(); r.onload=()=>{ const data=document.getElementById('setLogoData'); if(data) data.value=r.result; let prev=document.getElementById('logoPrev'); if(!prev){ prev=document.createElement('img'); prev.id='logoPrev'; prev.style.height='38px'; prev.style.marginRight='6px'; prev.style.verticalAlign='middle'; input.parentNode.insertBefore(prev, input.nextSibling); } prev.src=r.result; toast(t('تم تحميل الشعار','Logo loaded')); }; r.readAsDataURL(f); }
-function saveSettings(silent){ const s=DB.getOne('settings')||{}; s.companyName=$('#setComp').value; s.currency=$('#setCur').value||'ج.م'; s.taxRate=Number($('#setTax').value)||0; s.defaultDiscount=Number($('#setDisc').value)||0; s.printSize=$('#setPrint').value; s.pin=$('#setPin').value||''; s.taxNumber=$('#setTaxNo').value.trim(); s.logo=$('#setLogoData').value; s.receiptNote=$('#setNote').value.trim(); s.autoLockMin=Number($('#setAutoLock').value)||5; s.theme=$('#setTheme').value||'light'; LANG=$('#setLang').value; s.lang=LANG; s.serverUrl=$('#setServer').value.trim(); s.apiUser=$('#setSUser').value.trim(); s.autoSync=$('#setAutoSync').checked; s.autoBackupHours=Number($('#setAutoBackup').value)||0; DB.setOne('settings',s); applyLang(); if(silent){ toast(t('تم الحفظ','Saved')); _setSyncStatus('dirty',t('لم تتم المزامنة','Not synced')); } else { toast(t('تم الحفظ','Saved')); renderShell(); } scheduleAutoBackup(); }
+function saveSettings(silent){ const s=DB.getOne('settings')||{}; s.companyName=$('#setComp').value; s.currency=$('#setCur').value||'ج.م'; s.taxRate=Number($('#setTax').value)||0; s.defaultDiscount=Number($('#setDisc').value)||0; s.printSize=$('#setPrint').value; s.pin=$('#setPin').value||''; s.taxNumber=$('#setTaxNo').value.trim(); s.logo=$('#setLogoData').value; s.receiptNote=$('#setNote').value.trim(); s.autoLockMin=Number($('#setAutoLock').value)||5; s.theme=$('#setTheme').value||'light'; LANG=$('#setLang').value; s.lang=LANG; s.serverUrl=$('#setServer').value.trim(); s.apiUser=$('#setSUser').value.trim(); s.autoSync=$('#setAutoSync').checked; s.autoBackupHours=Number($('#setAutoBackup').value)||0; const fbKey=$('#setFBKey')?$('#setFBKey').value.trim():''; const fbProj=$('#setFBProj')?$('#setFBProj').value.trim():''; if(fbKey||fbProj) s.firebaseConfig={apiKey:fbKey,projectId:fbProj,authDomain:(fbProj+'.firebaseapp.com'),storageBucket:(fbProj+'.appspot.com')}; DB.setOne('settings',s); applyLang(); if(silent){ toast(t('تم الحفظ','Saved')); _setSyncStatus('dirty',t('لم تتم المزامنة','Not synced')); } else { toast(t('تم الحفظ','Saved')); renderShell(); } scheduleAutoBackup(); }
 function bindSettingsAutosave(){ const ids=['setComp','setCur','setTax','setDisc','setPrint','setLang','setNote','setTaxNo','setPin','setAutoLock','setServer','setSUser','setAutoSync','setTheme','setAutoBackup']; ids.forEach(id=>{ const el=$('#'+id); if(el){ el.addEventListener('change',()=>saveSettings(true)); el.addEventListener('input',()=>{ if(el.type!=='text'&&el.type!=='password'&&el.tagName!=='SELECT') return; saveSettings(true); }); } }); const logo=$('#setLogo'); if(logo) logo.addEventListener('change',()=>setTimeout(()=>saveSettings(true),50)); }
 /* Clear all demo/transactional data for the active company, keeping config (companies, users, settings, branches, accounts, journal, audit). */
 function clearDemoData(){ confirmModal(t('مسح البيانات التجريبية','Clear Demo Data'), t('سيتم حذف المنتجات والعملاء والموردين والفواتير والمشتريات والأوامر والحركات والقيود. هل أنت متأكد؟','This deletes products, customers, suppliers, invoices, purchases, POs, movements and entries. Are you sure?'), ()=>{
@@ -871,15 +1038,19 @@ async function boot(){ await ensureAdmin();   migrateToCompanies(); ensureBranch
   const sess=localStorage.getItem('erp_session'); if(sess){ try{ currentUser=JSON.parse(sess); }catch(e){} }
   if(!currentUser){ const au=DB.get('users').find(u=>u.role==='admin')||DB.get('users')[0]; currentUser = au ? {id:au.id,name:au.name,role:au.role,username:au.username} : {id:'auto',name:t('المدير','Admin'),role:'admin',username:'admin'}; }
   ensureStockByWh();
-  enterApp();
+  if(s.pin){ showLock(enterApp); } else { enterApp(); }
+  try{ scheduleMidnightBackup(); }catch(e){}
 }
 function enterApp(){ if(!_activeCompanyId){ const comps=DB.get('companies'); if(comps.length){ setCurrentCompany(comps[0].id); if(!DB.getOne('acc_seeded')) seedAccounts(comps[0].id); } }
-  renderShell(); checkNotifications(); if((DB.getOne('settings')||{}).autoSync) scheduleSync(); scheduleAutoBackup(); Backup.remindIfOld(7);
+  renderShell(); checkNotifications(); if((DB.getOne('settings')||{}).autoSync) scheduleSync(); scheduleAutoBackup();
+  var _s=DB.getOne('settings')||{}; if(!_s.lastBackup){ _s.lastBackup=new Date().toISOString(); DB.setOne('settings',_s); }
+  Backup.remindIfOld(7);
   if(!window._globalListeners){ window._globalListeners=true;
     document.addEventListener('keydown', bcKey);
     window.addEventListener('beforeunload', function(e){ if(_cart && _cart.length){ e.preventDefault(); e.returnValue=''; return ''; } });
     ['mousemove','keydown','click','touchstart'].forEach(ev=>document.addEventListener(ev, resetIdle, {passive:true}));
     resetIdle();
+    try{ initKeyboardShortcuts(); }catch(e){}
   } }
 document.addEventListener('DOMContentLoaded', boot);
 
